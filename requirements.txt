@@ -1,0 +1,7 @@
+atprototools
+signalwire
+requests
+flask
+google-cloud-bigquery
+google-cloud-secret-manager
+atprotocol
