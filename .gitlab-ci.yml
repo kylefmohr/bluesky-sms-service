@@ -1,0 +1,14 @@
+# include:
+#   - template: Auto-DevOps.gitlab-ci.yml
+
+image: google/cloud-sdk:latest
+deploy:
+  stage: deploy
+  script:
+    - export GOOGLE_CLOUD_CREDENTIALS=$(echo $BASE64_GOOGLE_CLOUD_CREDENTIALS | base64 -d)
+    - echo $GOOGLE_CLOUD_CREDENTIALS > service-account-key.json 
+    - gcloud auth activate-service-account --key-file service-account-key.json 
+    - gcloud config set project $PROJECT_ID 
+    - gcloud auth configure-docker
+    - gcloud builds submit --pack image=gcr.io/$PROJECT_ID/$SERVICE_ID
+    - gcloud run deploy $SERVICE_ID --image gcr.io/$PROJECT_ID/$SERVICE_ID --region=us-central1 --platform managed --allow-unauthenticated
