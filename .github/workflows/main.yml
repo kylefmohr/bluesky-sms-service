@@ -23,5 +23,5 @@ jobs:
 
     - name: Build and deploy to Cloud Run
       run: |
-        gcloud builds submit --pack image=gcr.io/${{ secrets.PROJECT_ID }}/${{ secrets.SERVICE_ID }}
+        gcloud builds submit --pack image=gcr.io/${{ secrets.GOOGLE_CLOUD_DOMAIN }}/${{ secrets.PROJECT_ID }}/${{ secrets.SERVICE_ID }}
         gcloud run deploy ${{ secrets.SERVICE_ID }} --image gcr.io/${{ secrets.PROJECT_ID }}/${{ secrets.SERVICE_ID }} --region=us-central1 --platform managed --allow-unauthenticated  --format=quiet
