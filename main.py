@@ -1,6 +1,5 @@
 import flask
 from atprototools import Session
-from signalwire.rest import Client
 import requests, os, ast, re, time
 from flask import Flask, request
 from google.cloud import secretmanager
@@ -16,7 +15,7 @@ registrations_open = True
 def load_approved_senders() -> list[str]:
     global approved_senders
     client = bigquery.Client()
-    query = 'SELECT * FROM `able-math-394519.bluesky_registrations.bluesky_registrations`'
+    query = 'SELECT * FROM `' + os.environ.get("PROJECT_ID") + '.bluesky_registrations.bluesky_registrations`'
     results = client.query(query)
     approved_senders = []
     for row in results:
@@ -29,7 +28,7 @@ def add_sender(sender) -> bool:
     global approved_senders
     client = bigquery.Client()
     payload = {"sender": sender, "timestamp": time.time()}
-    table_path = "able-math-394519.bluesky_registrations.bluesky_registrations"
+    table_path = os.environ.get("PROJECT_ID") + ".bluesky_registrations.bluesky_registrations"
     insert_job = client.insert_rows_json(table_path, [payload])
     print("Add sender results: " + str(insert_job))
     return True
@@ -43,7 +42,7 @@ def add_secret(sender, username, app_password) -> bool:
     secret_manager = secretmanager.SecretManagerServiceClient()
     secret_id = sender
     secret_settings = {'replication': {'automatic': {}}}
-    parent = "projects/able-math-394519"
+    parent = "projects/" + os.environ.get("PROJECT_ID")
     json_payload = {"username": username, "app-password": app_password}
     payload = str(json_payload).encode("UTF-8")
     try:
@@ -62,7 +61,7 @@ def add_secret(sender, username, app_password) -> bool:
 def retrieve_secret(sender) -> dict:
     sender = sender.replace("+", "_")  # Google Secret Manager does not allow + in secret names
     secret_manager = secretmanager.SecretManagerServiceClient()
-    secret_id = "projects/able-math-394519/secrets/" + sender + "/versions/latest"
+    secret_id = "projects/" + os.environ.get("PROJECT_ID") + "/secrets/" + sender + "/versions/latest"
     try:
         response = secret_manager.access_secret_version(name=secret_id)
     except Exception as e:

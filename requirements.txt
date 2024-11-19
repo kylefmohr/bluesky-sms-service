@@ -1,5 +1,4 @@
 atprototools
-signalwire
 requests
 flask
 google-cloud-bigquery

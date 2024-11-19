@@ -1,5 +1,5 @@
 # bluesky-sms-service
-This program utilizes [SignalWire SMS APIs](https://developer.signalwire.com/technical-reference/) as well as [Bluesky's atproto API](https://atproto.com/docs) to host a simple Python application in Google Cloud, utilizing a number of Google Cloud services.
+This program utilizes [Bluesky's atproto API](https://atproto.com/docs) to host a simple Python application in Google Cloud, utilizing a number of Google Cloud services.
 
 ## To use!
 Simply text `register <your bsky.social handle> <your bsky.social app password>` to `+1-414-432-4321`, and you'll be automatically registered. For example, you might send `register dril.bsky.social asdf-jklq-wert-yuio` to `414-432-4321`, and then any subsequent messages sent to this number will be posted to your Bluesky account. To register an app password, you can do so [here](https://bsky.app/settings/app-passwords). Login passwords are *not* supported. Also, please note that you will *not* receive any messages back from this number, due to increasingly strict anti-spam laws. 
