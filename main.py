@@ -207,9 +207,13 @@ def webhook_handler() -> flask.Response:
             print("A registration request was sent while registrations are closed. From: " + sender + ": " + sms_body)
             exit(1)
     else:  # Sender is in approved senders
-        credentials = retrieve_secret(sender)
-        username = credentials['username']
-        app_password = credentials['app-password']
+        # credentials = retrieve_secret(sender)
+        # username = credentials['username']
+        # app_password = credentials['app-password']
+        client = bigquery.Client()
+        username_query = "SELECT username FROM swift-surf-156407.bluesky_registrations.bluesky_registrations WHERE sender = '" + sender + "'"
+        username = client.query(username_query).result()[0][0]
+        app_password = retrieve_secret(username)
         if sms_body.startswith("!unregister"):
             unregister_username = sms_body.split(" ")[1]
             if unregister_username == username:
