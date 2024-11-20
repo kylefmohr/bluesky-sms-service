@@ -80,6 +80,16 @@ def retrieve_username(sender) -> str:
     return None
 
 
+def matches_app_password_format(app_password) -> bool:
+    app_password_format = re.compile(r'[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}')
+    if app_password_format.match(app_password) is None:
+        print("App password is not in the correct format")
+        print("Login passwords are NOT supported")
+        return False
+    return True
+
+
+
 def register_sender(sender, username, app_password, developer_username=None, developer_app_password=None) -> bool:
     global approved_senders
 
@@ -87,13 +97,10 @@ def register_sender(sender, username, app_password, developer_username=None, dev
         print("Sender already registered")
         return False
 
-    #  verify app password format per bluesky's atprotocol recommendations
-    #  https://github.com/bluesky-social/atproto-ecosystem/blob/main/app-passwords.md
-    app_password_format = re.compile(r'[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}')
-    if app_password_format.match(app_password) is None:
+    if not matches_app_password_format(app_password):
         print("App password is not in the correct format")
-        print("Login passwords are NOT supported")
         return False
+    
 
     client = Client()
     client.login(developer_username, developer_app_password)
@@ -217,14 +224,13 @@ def webhook_handler() -> flask.Response:
             print("A registration request was sent while registrations are closed. From: " + sender + ": " + sms_body)
             exit(1)
     else:  # Sender is in approved senders
-        # credentials = retrieve_secret(sender)
-        # username = credentials['username']
-        # app_password = credentials['app-password']
-        client = bigquery.Client()
         username = retrieve_username(sender)
         app_password = retrieve_secret(username)
         if sms_body.startswith("!unregister"):
-            unregister_username = sms_body.split(" ")[1]
+            try:
+                unregister_username = sms_body.split(" ")[1]
+            except:
+                unregister_username = username
             if unregister_username == username:
                 resp = unregister_sender(sender, unregister_username)
                 print(sender + ": " + sms_body)
@@ -233,6 +239,21 @@ def webhook_handler() -> flask.Response:
             else:
                 print("Unregister username does not match registered username")
                 exit(1)
+        elif sms_body.startswith("!register") or sms_body.startswith("register"):
+            try:
+                potential_app_password = sms_body.split(" ")[2]
+            except:
+                potential_app_password = None
+            if matches_app_password_format(potential_app_password):
+                print("Registration request sent by registered sender")
+                if registrations_open:
+                    print("Registering new account for known sender")
+                    username = sms_body.split(" ")[1]
+                    app_password = sms_body.split(" ")[2]
+                    developer_app_password = retrieve_secret(bluesky_api_username)
+                    developer_username = bluesky_api_username
+                    resp = register_sender(sender, username, app_password, developer_username, developer_app_password)
+                    return flask_response
         if not media_included:
             send_post(username, app_password, sms_body)
             return flask_response
