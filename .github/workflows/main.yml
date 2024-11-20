@@ -24,4 +24,4 @@ jobs:
     - name: Build and deploy to Cloud Run
       run: gcloud builds submit --pack=image=gcr.io/${{ secrets.PROJECT_ID }}/${{ secrets.SERVICE_ID }}
     - name: Deploy
-      run: gcloud run deploy ${{ secrets.SERVICE_ID }} --image gcr.io/${{ secrets.PROJECT_ID }}/${{ secrets.SERVICE_ID }} --region=us-central1 --platform managed --allow-unauthenticated  --memory=128Mi --min-instances=0
+      run: gcloud run deploy ${{ secrets.SERVICE_ID }} --image gcr.io/${{ secrets.PROJECT_ID }}/${{ secrets.SERVICE_ID }} --region=us-central1 --platform managed --allow-unauthenticated  --memory=256Mi --min-instances=0
