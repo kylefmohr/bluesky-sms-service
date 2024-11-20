@@ -70,6 +70,16 @@ def retrieve_secret(username) -> dict:
     return secret_value
 
 
+def retrieve_username(sender) -> str:
+    client = bigquery.Client()
+    query = f"SELECT username FROM `{os.environ.get('PROJECT_ID')}.bluesky_registrations.bluesky_registrations` WHERE sender = '{sender}'"
+    query_job = client.query(query)
+    results = query_job.result()
+    for row in results:
+        return row['username']
+    return None
+
+
 def register_sender(sender, username, app_password, developer_username=None, developer_app_password=None) -> bool:
     global approved_senders
 
@@ -211,8 +221,7 @@ def webhook_handler() -> flask.Response:
         # username = credentials['username']
         # app_password = credentials['app-password']
         client = bigquery.Client()
-        username_query = "SELECT username FROM swift-surf-156407.bluesky_registrations.bluesky_registrations WHERE sender = '" + sender + "'"
-        username = client.query(username_query).result()[0][0]
+        username = retrieve_username(sender)
         app_password = retrieve_secret(username)
         if sms_body.startswith("!unregister"):
             unregister_username = sms_body.split(" ")[1]
