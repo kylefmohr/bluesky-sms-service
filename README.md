@@ -7,3 +7,6 @@ Simply text `register <your bsky.social handle> <your bsky.social app password>`
 After you've registered, you can text that number any time you want to post to Bluesky! Photos are supported as well! Messages longer than 300 characters will be automatically threaded, but just a heads up that due to the way longer text messages are handled, it may not appear on your feed for 2-3 minutes. Normal length posts are posted almost instantly. 
 
 Let me know if you run into issues, you can raise an issue here or contact me via [Bluesky here](https://bsky.app/profile/assf.art)
+
+## To unregister!
+Simply text `!unregister <your bsky.social handle>` to `+1-414-432-4321`, and your account will be unregistered. For example, you might send `!unregister dril.bsky.social` to `414-432-4321`, and your account information will be removed from this service.

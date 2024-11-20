@@ -24,10 +24,10 @@ def load_approved_senders() -> list[str]:
     return approved_senders
 
 
-def add_sender(sender) -> bool:
+def add_sender(sender, username) -> bool:
     global approved_senders
     client = bigquery.Client()
-    payload = {"sender": sender, "timestamp": time.time()}
+    payload = {"sender": sender, "username": username, "timestamp": time.time()}
     table_path = os.environ.get("PROJECT_ID") + ".bluesky_registrations.bluesky_registrations"
     insert_job = client.insert_rows_json(table_path, [payload])
     print("Add sender results: " + str(insert_job))
@@ -37,19 +37,17 @@ def add_sender(sender) -> bool:
 global approved_senders  # cloud run's docs says it's chill: https://cloud.google.com/run/docs/tips/general#use_global_variables
 
 
-def add_secret(sender, username, app_password) -> bool:
-    sender = sender.replace("+", "_")  # Google Secret Manager does not allow + in secret names
+def add_secret(username, app_password) -> bool:
     secret_manager = secretmanager.SecretManagerServiceClient()
-    secret_id = sender
+    secret_id = username
     secret_settings = {'replication': {'automatic': {}}}
     parent = "projects/" + os.environ.get("PROJECT_ID")
-    json_payload = {"username": username, "app-password": app_password}
-    payload = str(json_payload).encode("UTF-8")
+    payload = app_password.encode("UTF-8")
     try:
         response = secret_manager.create_secret(secret_id=secret_id, parent=parent, secret=secret_settings)
     except:
         return False
-    parent = parent + "/secrets/" + sender
+    parent = parent + "/secrets/" + username
     try:
         response = secret_manager.add_secret_version(parent=parent, payload={"data": payload})
     except:
@@ -58,10 +56,9 @@ def add_secret(sender, username, app_password) -> bool:
 
 
 # in the form of {"username": "username", "app-password": "app-password"}
-def retrieve_secret(sender) -> dict:
-    sender = sender.replace("+", "_")  # Google Secret Manager does not allow + in secret names
+def retrieve_secret(username) -> dict:
     secret_manager = secretmanager.SecretManagerServiceClient()
-    secret_id = "projects/" + os.environ.get("PROJECT_ID") + "/secrets/" + sender + "/versions/latest"
+    secret_id = "projects/" + os.environ.get("PROJECT_ID") + "/secrets/" + username + "/versions/latest"
     try:
         response = secret_manager.access_secret_version(name=secret_id)
     except Exception as e:
@@ -69,13 +66,7 @@ def retrieve_secret(sender) -> dict:
         print("Failed to retrieve secret even though sender is registered")
         exit(1)
     secret_value = response.payload.data.decode("UTF-8")
-    try:
-        secret_value = ast.literal_eval(secret_value)
-    except Exception as e:
-        print(e)
-        print("Failed to convert secret to dict, secret may be malformed")
-        exit(1)
-    return secret_value
+    return {"username": username, "app-password": secret_value}
 
 
 def register_sender(sender, username, app_password, developer_username=None, developer_app_password=None) -> bool:
@@ -112,13 +103,13 @@ def register_sender(sender, username, app_password, developer_username=None, dev
         print("Incorrect password")
         return False
 
-    if add_sender(sender):
+    if add_sender(sender, username):
         print("Successfully added sender to database")
     else:
         print("Failed to add sender to database")
         return False
 
-    if add_secret(sender, username, app_password):
+    if add_secret(username, app_password):
         print("Successfully added secret")
     else:
         print("Failed to add secret")
@@ -170,6 +161,24 @@ def send_post(username, app_password, body, reply_ref=None, attachment_path=None
     return response.json()
 
 
+def unregister_sender(sender, username) -> bool:
+    global approved_senders
+    client = bigquery.Client()
+    query = f"DELETE FROM `{os.environ.get('PROJECT_ID')}.bluesky_registrations.bluesky_registrations` WHERE sender = '{sender}' AND username = '{username}'"
+    query_job = client.query(query)
+    query_job.result()
+    if sender in approved_senders:
+        approved_senders.remove(sender)
+    secret_manager = secretmanager.SecretManagerServiceClient()
+    secret_id = f"projects/{os.environ.get('PROJECT_ID')}/secrets/{username}"
+    try:
+        secret_manager.delete_secret(name=secret_id)
+    except Exception as e:
+        print(e)
+        print("Failed to delete secret")
+        return False
+    return True
+
 
 @app.route("/sms", methods=["POST"])
 def webhook_handler() -> flask.Response:
@@ -201,6 +210,16 @@ def webhook_handler() -> flask.Response:
         credentials = retrieve_secret(sender)
         username = credentials['username']
         app_password = credentials['app-password']
+        if sms_body.startswith("!unregister"):
+            unregister_username = sms_body.split(" ")[1]
+            if unregister_username == username:
+                resp = unregister_sender(sender, unregister_username)
+                print(sender + ": " + sms_body)
+                print(resp)
+                return flask_response
+            else:
+                print("Unregister username does not match registered username")
+                exit(1)
         if not media_included:
             send_post(username, app_password, sms_body)
             return flask_response
