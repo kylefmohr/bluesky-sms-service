@@ -97,7 +97,7 @@ def register_sender(sender, username, app_password, developer_username=None, dev
     client.login(developer_username, developer_app_password)
 
     try:
-        client.get_author_feed(username)
+        client.get_profile(username)
     except Exception as e:
         print(e)
         print("Username does not exist")
