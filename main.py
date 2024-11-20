@@ -93,10 +93,6 @@ def matches_app_password_format(app_password) -> bool:
 def register_sender(sender, username, app_password, developer_username=None, developer_app_password=None) -> bool:
     global approved_senders
 
-    if sender in approved_senders:
-        print("Sender already registered")
-        return False
-
     if not matches_app_password_format(app_password):
         print("App password is not in the correct format")
         return False
