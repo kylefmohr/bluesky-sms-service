@@ -10,7 +10,7 @@ agent = Client()
 app = Flask(__name__)
 
 registrations_open = True
-
+bluesky_api_username = 'assf.art'
 
 def load_approved_senders() -> list[str]:
     global approved_senders
@@ -55,8 +55,9 @@ def add_secret(username, app_password) -> bool:
     return True
 
 
-# in the form of {"username": "username", "app-password": "app-password"}
+
 def retrieve_secret(username) -> dict:
+    username = username.lower().replace(".","_") # Secret names don't allow periods, bsky usernames don't allow underscores
     secret_manager = secretmanager.SecretManagerServiceClient()
     secret_id = "projects/" + os.environ.get("PROJECT_ID") + "/secrets/" + username + "/versions/latest"
     try:
@@ -66,7 +67,7 @@ def retrieve_secret(username) -> dict:
         print("Failed to retrieve secret even though sender is registered")
         exit(1)
     secret_value = response.payload.data.decode("UTF-8")
-    return {"username": username, "app-password": secret_value}
+    return secret_value
 
 
 def register_sender(sender, username, app_password, developer_username=None, developer_app_password=None) -> bool:
@@ -193,9 +194,8 @@ def webhook_handler() -> flask.Response:
             if sms_body.startswith("register"):
                 username = sms_body.split(" ")[1]
                 app_password = sms_body.split(" ")[2]
-                developer_creds = retrieve_secret("bluesky-api-creds")  # These are just my handle and an app password for now
-                developer_username = developer_creds['username']
-                developer_app_password = developer_creds['app-password']
+                developer_app_password = retrieve_secret(bluesky_api_username)
+                developer_username = bluesky_api_username
                 resp = register_sender(sender, username, app_password, developer_username, developer_app_password)
                 print(sender + ": " + sms_body)
                 print(resp)
