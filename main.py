@@ -49,6 +49,28 @@ def add_sender(sender, username) -> bool:
     print("Add sender results: " + str(insert_job))
     return True
 
+def delete_sender(sender, username=None) -> bool:
+    """
+    Delete a sender from the BigQuery database.
+
+    Args:
+        sender (str): The phone number of the sender.
+        username (str): The Bluesky username of the sender. If it is not specified, uses the first username associated with the sender's phone
+
+    Returns:
+        bool: True if the sender was successfully deleted, False otherwise.
+    """
+    global approved_senders
+    if username is None:
+        username = retrieve_username(sender)
+    client = bigquery.Client()
+    query = f"DELETE FROM `{os.environ.get('PROJECT_ID')}.bluesky_registrations.bluesky_registrations` WHERE sender = '{sender}'"
+    query_job = client.query(query)
+    query_job.result()
+    if sender in approved_senders:
+        approved_senders.remove(sender)
+    return True
+
 
 global approved_senders  # cloud run's docs says it's chill: https://cloud.google.com/run/docs/tips/general#use_global_variables
 
@@ -80,6 +102,25 @@ def add_secret(username, app_password) -> bool:
         response = secret_manager.add_secret_version(parent=parent, payload={"data": payload})
     except:
         print("Failed to add secret version for user: " + username)
+        return False
+    return True
+
+def delete_secret(username) -> bool:
+    """
+    Delete a secret (app password) from the Google Cloud Secret Manager.
+
+    Args:
+        username (str): The Bluesky username.
+
+    Returns:
+        bool: True if the secret was successfully deleted, False otherwise.
+    """
+    secret_manager = secretmanager.SecretManagerServiceClient
+    secret_id = "projects/" + os.environ.get("PROJECT_ID") + "/secrets/" + username
+    try:
+        response = secret_manager.delete_secret(name=secret_id)
+    except:
+        print("Failed to delete secret for user: " + username)
         return False
     return True
 
@@ -272,22 +313,17 @@ def unregister_sender(sender, username=None) -> bool:
         bool: True if the sender was successfully unregistered, False otherwise.
     """
     global approved_senders
-    client = bigquery.Client()
-    query = f"DELETE FROM `{os.environ.get('PROJECT_ID')}.bluesky_registrations.bluesky_registrations` WHERE sender = '{sender}' AND username = '{username}'"
-    query_job = client.query(query)
-    query_job.result()
-    if sender in approved_senders:
-        approved_senders.remove(sender)
     if username is None:
         username = retrieve_username(sender)
-    username = username.lower().replace(".","_")
-    secret_manager = secretmanager.SecretManagerServiceClient()
-    secret_id = f"projects/{os.environ.get('PROJECT_ID')}/secrets/{username}"
-    try:
-        secret_manager.delete_secret(name=secret_id)
-    except Exception as e:
-        print(e)
-        print("Failed to delete secret and unregister user: " + username)
+    if delete_sender(sender, username):
+        print("Successfully deleted sender from database")
+    else:
+        print("Failed to delete sender from database")
+        return False
+    if delete_secret(username):
+        print("Successfully deleted secret")
+    else:
+        print("Failed to delete secret")
         return False
     return True
 
