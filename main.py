@@ -11,6 +11,7 @@ app = Flask(__name__)
 
 registrations_open = True
 bluesky_api_username = 'assf.art'
+global approved_senders  # cloud run's docs says it's chill: https://cloud.google.com/run/docs/tips/general#use_global_variables
 
 def load_approved_senders() -> list[str]:
     """
@@ -72,7 +73,7 @@ def delete_sender(sender, username=None) -> bool:
     return True
 
 
-global approved_senders  # cloud run's docs says it's chill: https://cloud.google.com/run/docs/tips/general#use_global_variables
+
 
 
 def add_secret(username, app_password) -> bool:
