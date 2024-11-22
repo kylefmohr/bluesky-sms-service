@@ -66,7 +66,7 @@ def add_secret(username, app_password) -> bool:
         bool: True if the secret was successfully added, False otherwise.
     """
     secret_manager = secretmanager.SecretManagerServiceClient()
-    secret_id = username.lower.replace(".","_")
+    secret_id = username.lower().replace(".","_")
     secret_settings = {'replication': {'automatic': {}}}
     parent = "projects/" + os.environ.get("PROJECT_ID")
     payload = app_password.encode("UTF-8")
@@ -280,7 +280,7 @@ def unregister_sender(sender, username=None) -> bool:
         approved_senders.remove(sender)
     if username is None:
         username = retrieve_username(sender)
-    username = username.lower.replace(".","_")
+    username = username.lower().replace(".","_")
     secret_manager = secretmanager.SecretManagerServiceClient()
     secret_id = f"projects/{os.environ.get('PROJECT_ID')}/secrets/{username}"
     try:
