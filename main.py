@@ -73,11 +73,13 @@ def add_secret(username, app_password) -> bool:
     try:
         response = secret_manager.create_secret(secret_id=secret_id, parent=parent, secret=secret_settings)
     except:
+        print("Failed to create secret for user: " + username)
         return False
     parent = parent + "/secrets/" + username
     try:
         response = secret_manager.add_secret_version(parent=parent, payload={"data": payload})
     except:
+        print("Failed to add secret version for user: " + username)
         return False
     return True
 
@@ -100,7 +102,7 @@ def retrieve_secret(username) -> dict:
         response = secret_manager.access_secret_version(name=secret_id)
     except Exception as e:
         print(e)
-        print("Failed to retrieve secret even though sender is registered")
+        print("Failed to retrieve secret for user: " + username)
         exit(1)
     secret_value = response.payload.data.decode("UTF-8")
     return secret_value
@@ -285,7 +287,7 @@ def unregister_sender(sender, username=None) -> bool:
         secret_manager.delete_secret(name=secret_id)
     except Exception as e:
         print(e)
-        print("Failed to delete secret")
+        print("Failed to delete secret and unregister user: " + username)
         return False
     return True
 
