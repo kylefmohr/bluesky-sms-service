@@ -13,6 +13,12 @@ registrations_open = True
 bluesky_api_username = 'assf.art'
 
 def load_approved_senders() -> list[str]:
+    """
+    Load the list of approved senders (phone numbers) from the BigQuery database.
+
+    Returns:
+        list[str]: A list of approved sender phone numbers.
+    """
     global approved_senders
     client = bigquery.Client()
     query = 'SELECT * FROM `' + os.environ.get("PROJECT_ID") + '.bluesky_registrations.bluesky_registrations`'
@@ -25,6 +31,16 @@ def load_approved_senders() -> list[str]:
 
 
 def add_sender(sender, username) -> bool:
+    """
+    Add a new sender to the BigQuery database.
+
+    Args:
+        sender (str): The phone number of the sender.
+        username (str): The Bluesky username of the sender.
+
+    Returns:
+        bool: True if the sender was successfully added, False otherwise.
+    """
     global approved_senders
     client = bigquery.Client()
     payload = {"sender": sender, "username": username, "timestamp": time.time()}
@@ -38,8 +54,19 @@ global approved_senders  # cloud run's docs says it's chill: https://cloud.googl
 
 
 def add_secret(username, app_password) -> bool:
+    """
+    Add a new secret (app password) to the Google Cloud Secret Manager.
+    The secret is titled as the user's Bluesky handle (with '.' replaced with '_')
+
+    Args:
+        username (str): The Bluesky username.
+        app_password (str): The app password for the Bluesky account.
+
+    Returns:
+        bool: True if the secret was successfully added, False otherwise.
+    """
     secret_manager = secretmanager.SecretManagerServiceClient()
-    secret_id = username
+    secret_id = username.lower.replace(".","_")
     secret_settings = {'replication': {'automatic': {}}}
     parent = "projects/" + os.environ.get("PROJECT_ID")
     payload = app_password.encode("UTF-8")
@@ -57,6 +84,15 @@ def add_secret(username, app_password) -> bool:
 
 
 def retrieve_secret(username) -> dict:
+    """
+    Retrieve the secret (app password) for a given username from the Google Cloud Secret Manager.
+
+    Args:
+        username (str): The Bluesky username.
+
+    Returns:
+        dict: The app password for the given username.
+    """
     username = username.lower().replace(".","_") # Secret names don't allow periods, bsky usernames don't allow underscores
     secret_manager = secretmanager.SecretManagerServiceClient()
     secret_id = "projects/" + os.environ.get("PROJECT_ID") + "/secrets/" + username + "/versions/latest"
@@ -71,6 +107,15 @@ def retrieve_secret(username) -> dict:
 
 
 def retrieve_username(sender) -> str:
+    """
+    Retrieve the Bluesky username for a given sender from the BigQuery database.
+
+    Args:
+        sender (str): The phone number of the sender.
+
+    Returns:
+        str: The Bluesky username of the sender, or None if not found.
+    """
     client = bigquery.Client()
     query = f"SELECT username FROM `{os.environ.get('PROJECT_ID')}.bluesky_registrations.bluesky_registrations` WHERE sender = '{sender}'"
     query_job = client.query(query)
@@ -81,6 +126,15 @@ def retrieve_username(sender) -> str:
 
 
 def matches_app_password_format(app_password) -> bool:
+    """
+    Check if the given app password matches the required format.
+
+    Args:
+        app_password (str): The app password to check.
+
+    Returns:
+        bool: True if the app password matches the required format, False otherwise.
+    """
     app_password_format = re.compile(r'[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}')
     if app_password_format.match(app_password) is None:
         print("App password is not in the correct format")
@@ -91,6 +145,19 @@ def matches_app_password_format(app_password) -> bool:
 
 
 def register_sender(sender, username, app_password, developer_username=None, developer_app_password=None) -> bool:
+    """
+    Register a new sender with their Bluesky username and app password.
+
+    Args:
+        sender (str): The phone number of the sender.
+        username (str): The Bluesky username of the sender.
+        app_password (str): The app password for the Bluesky account.
+        developer_username (str, optional): The developer's Bluesky username. Defaults to None.
+        developer_app_password (str, optional): The developer's app password. Defaults to None.
+
+    Returns:
+        bool: True if the sender was successfully registered, False otherwise.
+    """
     global approved_senders
 
     if not matches_app_password_format(app_password):
@@ -132,12 +199,28 @@ def register_sender(sender, username, app_password, developer_username=None, dev
 
 
 def cleanup_jpgs() -> None:
+    """
+    Remove all .jpg files from the current directory.
+    """
     for filename in os.listdir():
         if filename.endswith(".jpg"):
             os.remove(filename)
 
 
 def send_post(username, app_password, body, reply_ref=None, attachment_path=None) -> dict:
+    """
+    Send a post to Bluesky.
+
+    Args:
+        username (str): The Bluesky username.
+        app_password (str): The app password for the Bluesky account.
+        body (str): The content of the post.
+        reply_ref (dict, optional): The reference to the post being replied to. Defaults to None.
+        attachment_path (str, optional): The path to the attachment file. Defaults to None.
+
+    Returns:
+        dict: The response from the Bluesky API.
+    """
     if len(body) > 300:  # maximum post length, otherwise we'll thread it
         last_page = False
         full_reply_ref = None
@@ -175,7 +258,17 @@ def send_post(username, app_password, body, reply_ref=None, attachment_path=None
     return response.json()
 
 
-def unregister_sender(sender, username) -> bool:
+def unregister_sender(sender, username=None) -> bool:
+    """
+    Unregister a sender from the BigQuery database and delete their secret from the Google Cloud Secret Manager.
+
+    Args:
+        sender (str): The phone number of the sender.
+        username (str): The Bluesky username of the sender. If it is not specified, uses the first username associated with the sender's phone
+
+    Returns:
+        bool: True if the sender was successfully unregistered, False otherwise.
+    """
     global approved_senders
     client = bigquery.Client()
     query = f"DELETE FROM `{os.environ.get('PROJECT_ID')}.bluesky_registrations.bluesky_registrations` WHERE sender = '{sender}' AND username = '{username}'"
@@ -183,6 +276,9 @@ def unregister_sender(sender, username) -> bool:
     query_job.result()
     if sender in approved_senders:
         approved_senders.remove(sender)
+    if username is None:
+        username = retrieve_username(sender)
+    username = username.lower.replace(".","_")
     secret_manager = secretmanager.SecretManagerServiceClient()
     secret_id = f"projects/{os.environ.get('PROJECT_ID')}/secrets/{username}"
     try:
@@ -196,6 +292,12 @@ def unregister_sender(sender, username) -> bool:
 
 @app.route("/sms", methods=["POST"])
 def webhook_handler() -> flask.Response:
+    """
+    Handle incoming SMS messages and process them accordingly.
+
+    Returns:
+        flask.Response: The response to be sent back to the sender.
+    """
     flask_response = flask.Response("OK")
     global approved_senders
     approved_senders = load_approved_senders()
