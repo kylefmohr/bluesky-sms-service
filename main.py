@@ -62,6 +62,7 @@ def delete_sender(sender, username=None) -> bool:
         bool: True if the sender was successfully deleted, False otherwise.
     """
     global approved_senders
+    approved_senders = load_approved_senders()
     if username is None:
         username = retrieve_username(sender)
     client = bigquery.Client()
