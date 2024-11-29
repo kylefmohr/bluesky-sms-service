@@ -1,3 +1,5 @@
+11/29/24: Temporarily offline, it will be back shortly.
+
 # bluesky-sms-service
 This program utilizes [Bluesky's atproto API](https://atproto.com/docs) to host a simple Python application in Google Cloud, utilizing a number of Google Cloud services.
 
@@ -14,3 +16,8 @@ Let me know if you run into issues, you can raise an issue here or contact me vi
 
 ## To unregister!
 Simply text `!unregister <your bsky.social handle>` to `+1-414-432-4321`, and your account will be unregistered. For example, you might send `!unregister dril.bsky.social` to `414-432-4321`, and your account information will be removed from this service.
+
+
+TODO:
+
+ - Move off of BigQuery, as it wasn't the right choice, especially due to the inability to delete entries for the first 90 minutes after they were created.
