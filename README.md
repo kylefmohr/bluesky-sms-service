@@ -21,4 +21,5 @@ Simply text `!unregister <your bsky.social handle>` to `+1-414-432-4321`, and yo
 TODO:
 
  - Move off of BigQuery, as it wasn't the right choice, especially due to the inability to delete entries for the first 90 minutes after they were created.
+   - Possibly Cloud Firestore
  - Only add a sender (i.e. a bsky username and the associated phone number) iff the secret was successfully registered as well
