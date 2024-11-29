@@ -99,7 +99,7 @@ def add_secret(username, app_password) -> bool:
     except:
         print("Failed to create secret for user: " + username)
         return False
-    parent = parent + "/secrets/" + username
+    parent = parent + "/secrets/" + secret_id
     try:
         response = secret_manager.add_secret_version(parent=parent, payload={"data": payload})
     except:
