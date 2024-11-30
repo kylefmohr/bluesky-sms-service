@@ -4,7 +4,7 @@ import requests, os, ast, re, time
 from flask import Flask, request
 from google.cloud import secretmanager
 from atprotocol.bsky import BskyAgent as Client
-from google.cloud import bigquery
+from google.cloud import firestore
 
 agent = Client()
 app = Flask(__name__)
@@ -15,25 +15,23 @@ global approved_senders  # cloud run's docs says it's chill: https://cloud.googl
 
 def load_approved_senders() -> list[str]:
     """
-    Load the list of approved senders (phone numbers) from the BigQuery database.
+    Load the list of approved senders (phone numbers) from the Firestore database.
 
     Returns:
         list[str]: A list of approved sender phone numbers.
     """
     global approved_senders
-    client = bigquery.Client()
-    query = 'SELECT * FROM `' + os.environ.get("PROJECT_ID") + '.bluesky_registrations.bluesky_registrations`'
-    results = client.query(query)
-    approved_senders = []
-    for row in results:
-        approved_senders.append(row['sender'])
+    db = firestore.Client()
+    # Get all documents from the registrations collection
+    docs = db.collection("bluesky-registrations").stream()
+    # Extract the document IDs (phone numbers)
+    approved_senders = [doc.id for doc in docs]
     print("Approved senders loaded: " + str(approved_senders))
     return approved_senders
 
-
 def add_sender(sender, username) -> bool:
     """
-    Add a new sender to the BigQuery database.
+    Add a new sender to the Firestore database.
 
     Args:
         sender (str): The phone number of the sender.
@@ -43,16 +41,21 @@ def add_sender(sender, username) -> bool:
         bool: True if the sender was successfully added, False otherwise.
     """
     global approved_senders
-    client = bigquery.Client()
-    payload = {"sender": sender, "username": username, "timestamp": time.time()}
-    table_path = os.environ.get("PROJECT_ID") + ".bluesky_registrations.bluesky_registrations"
-    insert_job = client.insert_rows_json(table_path, [payload])
-    print("Add sender results: " + str(insert_job))
+    db = firestore.Client()
+    # Create a new document with sender (phone) as the document ID
+    doc_ref = db.collection("bluesky-registrations").document(sender)
+    doc_ref.set({
+        "username": username,
+        "timestamp": firestore.SERVER_TIMESTAMP  # Use server timestamp for consistency
+    })
+    if sender not in approved_senders:
+        approved_senders.append(sender)
+    print(f"Added sender {sender} with username {username}")
     return True
 
 def delete_sender(sender, username=None) -> bool:
     """
-    Delete a sender from the BigQuery database.
+    Delete a sender from the Firestore database.
 
     Args:
         sender (str): The phone number of the sender.
@@ -62,20 +65,12 @@ def delete_sender(sender, username=None) -> bool:
         bool: True if the sender was successfully deleted, False otherwise.
     """
     global approved_senders
-    approved_senders = load_approved_senders()
-    if username is None:
-        username = retrieve_username(sender)
-    client = bigquery.Client()
-    query = f"DELETE FROM `{os.environ.get('PROJECT_ID')}.bluesky_registrations.bluesky_registrations` WHERE sender = '{sender}'"
-    query_job = client.query(query)
-    query_job.result()
+    db = firestore.Client()
+    # Delete the document with sender (phone) as the document ID
+    db.collection("bluesky-registrations").document(sender).delete()
     if sender in approved_senders:
         approved_senders.remove(sender)
     return True
-
-
-
-
 
 def add_secret(username, app_password) -> bool:
     """
@@ -153,7 +148,7 @@ def retrieve_secret(username) -> dict:
 
 def retrieve_username(sender) -> str:
     """
-    Retrieve the Bluesky username for a given sender from the BigQuery database.
+    Retrieve the Bluesky username for a given sender from the Firestore database.
 
     Args:
         sender (str): The phone number of the sender.
@@ -161,12 +156,11 @@ def retrieve_username(sender) -> str:
     Returns:
         str: The Bluesky username of the sender, or None if not found.
     """
-    client = bigquery.Client()
-    query = f"SELECT username FROM `{os.environ.get('PROJECT_ID')}.bluesky_registrations.bluesky_registrations` WHERE sender = '{sender}'"
-    query_job = client.query(query)
-    results = query_job.result()
-    for row in results:
-        return row['username']
+    db = firestore.Client()
+    # Get the document with sender (phone) as the document ID
+    doc = db.collection("bluesky-registrations").document(sender).get()
+    if doc.exists:
+        return doc.get("username")
     return None
 
 
@@ -305,7 +299,7 @@ def send_post(username, app_password, body, reply_ref=None, attachment_path=None
 
 def unregister_sender(sender, username=None) -> bool:
     """
-    Unregister a sender from the BigQuery database and delete their secret from the Google Cloud Secret Manager.
+    Unregister a sender from the Firestore database and delete their secret from the Google Cloud Secret Manager.
 
     Args:
         sender (str): The phone number of the sender.
