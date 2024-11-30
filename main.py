@@ -341,8 +341,8 @@ def webhook_handler() -> flask.Response:
     if sender not in approved_senders:  # Sender not in approved senders
         if registrations_open:
             if sms_body.startswith("register"):
-                username = sms_body.split(" ")[1]
-                app_password = sms_body.split(" ")[2]
+                username = sms_body.split(" ")[1].strip()
+                app_password = sms_body.split(" ")[2].strip().lower()
                 developer_app_password = retrieve_secret(bluesky_api_username)
                 developer_username = bluesky_api_username
                 resp = register_sender(sender, username, app_password, developer_username, developer_app_password)
