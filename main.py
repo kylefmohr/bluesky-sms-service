@@ -21,8 +21,8 @@ def load_approved_senders() -> list[str]:
         list[str]: A list of approved sender phone numbers.
     """
     global approved_senders
-    db = firestore.Client()
-    # Get all documents from the registrations collection
+    db = firestore.Client(project=os.environ.get("PROJECT_ID"), database="bluesky-registrations")
+    # Get all documents from the bluesky-registrations collection
     docs = db.collection("bluesky-registrations").stream()
     # Extract the document IDs (phone numbers)
     approved_senders = [doc.id for doc in docs]
@@ -41,7 +41,7 @@ def add_sender(sender, username) -> bool:
         bool: True if the sender was successfully added, False otherwise.
     """
     global approved_senders
-    db = firestore.Client()
+    db = firestore.Client(project=os.environ.get("PROJECT_ID"), database="bluesky-registrations")
     # Create a new document with sender (phone) as the document ID
     doc_ref = db.collection("bluesky-registrations").document(sender)
     doc_ref.set({
@@ -65,7 +65,7 @@ def delete_sender(sender, username=None) -> bool:
         bool: True if the sender was successfully deleted, False otherwise.
     """
     global approved_senders
-    db = firestore.Client()
+    db = firestore.Client(project=os.environ.get("PROJECT_ID"), database="bluesky-registrations")
     # Delete the document with sender (phone) as the document ID
     db.collection("bluesky-registrations").document(sender).delete()
     if sender in approved_senders:
@@ -156,7 +156,7 @@ def retrieve_username(sender) -> str:
     Returns:
         str: The Bluesky username of the sender, or None if not found.
     """
-    db = firestore.Client()
+    db = firestore.Client(project=os.environ.get("PROJECT_ID"), database="bluesky-registrations")
     # Get the document with sender (phone) as the document ID
     doc = db.collection("bluesky-registrations").document(sender).get()
     if doc.exists:
