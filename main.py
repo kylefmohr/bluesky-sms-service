@@ -5,6 +5,7 @@ from flask import Flask, request
 from google.cloud import secretmanager
 from atprotocol.bsky import BskyAgent as Client
 from google.cloud import firestore
+from chump import Application
 
 agent = Client()
 app = Flask(__name__)
@@ -12,6 +13,20 @@ app = Flask(__name__)
 registrations_open = True
 bluesky_api_username = 'assf.art'
 global approved_senders  # cloud run's docs says it's chill: https://cloud.google.com/run/docs/tips/general#use_global_variables
+
+
+def send_pushover_message(message: str) -> None:
+    """
+    Send a pushover message to the developer
+
+    Args:
+        message (str): The message to send.
+    """
+    print("Sending the following message to Pushover: " + message)
+    app = Application(os.environ.get("PUSHOVER_API_TOKEN"))
+    user = app.get_user(os.environ.get("PUSHOVER_USER_KEY"))
+    user.send_message("Bluesky SMS Service", message)
+    return
 
 def load_approved_senders() -> list[str]:
     """
@@ -93,12 +108,14 @@ def add_secret(username, app_password) -> bool:
         response = secret_manager.create_secret(secret_id=secret_id, parent=parent, secret=secret_settings)
     except:
         print("Failed to create secret for user: " + username)
+        send_pushover_message("Failed to create secret for user: " + username)
         return False
     parent = parent + "/secrets/" + secret_id
     try:
         response = secret_manager.add_secret_version(parent=parent, payload={"data": payload})
     except:
         print("Failed to add secret version for user: " + username)
+        send_pushover_message("Failed to add secret version for user: " + username)
         return False
     return True
 
@@ -118,6 +135,7 @@ def delete_secret(username) -> bool:
         response = secret_manager.delete_secret(name=secret_id)
     except:
         print("Failed to delete secret for user: " + username)
+        send_pushover_message("Failed to delete secret for user: " + username)
         return False
     return True
 
@@ -141,6 +159,7 @@ def retrieve_secret(username) -> dict:
     except Exception as e:
         print(e)
         print("Failed to retrieve secret for user: " + username)
+        send_pushover_message("Failed to retrieve secret for user: " + username)
         exit(1)
     secret_value = response.payload.data.decode("UTF-8")
     return secret_value
@@ -182,8 +201,50 @@ def matches_app_password_format(app_password) -> bool:
     return True
 
 
+def username_exists(username) -> bool:
+    """
+    Check if the given username exists.
 
-def register_sender(sender, username, app_password, developer_username=None, developer_app_password=None) -> bool:
+    Args:
+        username (str): The username to check.
+
+    Returns:
+        bool: True if the username exists, False otherwise.
+    """
+    client = Client()
+    developer_username = bluesky_api_username
+    developer_app_password = retrieve_secret(developer_username)
+    try:
+        client.get_profile(username)
+    except Exception as e:
+        print(e)
+        print("Username does not exist")
+        return False
+    return True
+
+
+def valid_app_password(username, app_password) -> bool:
+    """
+    Check if the given app password is valid for the given username.
+
+    Args:
+        username (str): The username.
+        app_password (str): The app password to check.
+
+    Returns:
+        bool: True if the app password is valid, False otherwise.
+    """
+    client = Client()
+    try:
+        client.login(username, app_password)
+    except Exception as e:
+        print(e)
+        return False
+    return True
+
+
+
+def register_sender(sender, username, app_password) -> bool:
     """
     Register a new sender with their Bluesky username and app password.
 
@@ -191,49 +252,53 @@ def register_sender(sender, username, app_password, developer_username=None, dev
         sender (str): The phone number of the sender.
         username (str): The Bluesky username of the sender.
         app_password (str): The app password for the Bluesky account.
-        developer_username (str, optional): The developer's Bluesky username. Defaults to None.
-        developer_app_password (str, optional): The developer's app password. Defaults to None.
-
     Returns:
         bool: True if the sender was successfully registered, False otherwise.
     """
     global approved_senders
 
     if not matches_app_password_format(app_password):
-        print("App password is not in the correct format")
+        print("App password is not in the correct regex format")
         return False
     
 
-    client = Client()
-    client.login(developer_username, developer_app_password)
-
-    try:
-        client.get_profile(username)
-    except Exception as e:
-        print(e)
+    if not username_exists(username):
         print("Username does not exist")
         return False
 
-    try:
-        new_client = Client()
-        new_client.login(username, app_password)
-        print("Successfully logged in")
-    except Exception as e:
-        print(e)
-        print("Incorrect password")
+    print("Username validated")
+
+    if not valid_app_password(username, app_password):
+        print("App password is not valid, could not log in as " + username)
         return False
 
     if add_sender(sender, username):
         print("Successfully added sender to database")
     else:
         print("Failed to add sender to database")
-        return False
+        approved_senders = load_approved_senders()
+        if sender not in approved_senders:
+            return False
+        else:
+            print("Sender got added even though add_sender returned false")
+            send_pushover_message("Sender " + sender + " got added even though add_sender returned false")
+            pass
 
     if add_secret(username, app_password):
         print("Successfully added secret")
     else:
         print("Failed to add secret")
-        return False
+        approved_senders = load_approved_senders()
+        if sender not in approved_senders:
+            return False
+        else:
+            print("Sender got added even though add_secret returned false. Attempting to delete sender")
+            send_pushover_message("Sender " + sender + " got added even though add_secret returned false. Attempting to delete sender")
+            if delete_sender(sender, username):
+                print("Successfully deleted sender")
+            else:
+                print("Failed to delete sender")
+                return False
     return True
 
 
@@ -340,12 +405,10 @@ def webhook_handler() -> flask.Response:
     media_included = request.form["NumMedia"] != "0"  # True if media is included, else false
     if sender not in approved_senders:  # Sender not in approved senders
         if registrations_open:
-            if sms_body.startswith("register"):
+            if sms_body.lower().startswith("register") or sms_body.lower().startswith("!register"):
                 username = sms_body.split(" ")[1].strip()
                 app_password = sms_body.split(" ")[2].strip().lower()
-                developer_app_password = retrieve_secret(bluesky_api_username)
-                developer_username = bluesky_api_username
-                resp = register_sender(sender, username, app_password, developer_username, developer_app_password)
+                resp = register_sender(sender, username, app_password)
                 print(sender + ": " + sms_body)
                 print(resp)
                 return flask_response
@@ -358,7 +421,7 @@ def webhook_handler() -> flask.Response:
     else:  # Sender is in approved senders
         username = retrieve_username(sender)
         app_password = retrieve_secret(username)
-        if sms_body.startswith("!unregister"):
+        if sms_body.lower().startswith("!unregister"):
             try:
                 unregister_username = sms_body.split(" ")[1]
             except:
