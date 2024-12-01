@@ -4,3 +4,4 @@ flask
 google-cloud-firestore
 google-cloud-secret-manager
 atprotocol
+chump
