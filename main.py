@@ -402,7 +402,7 @@ def webhook_handler() -> flask.Response:
     approved_senders = load_approved_senders()
     sms_body = request.form["Body"]
     sender = request.form["From"]
-    media_included = request.form["NumMedia"] != "0"  # True if media is included, else false
+    media_included = request.form.get("NumMedia", "0") != "0"  # True if media is included, else false
     if sender not in approved_senders:  # Sender not in approved senders
         if registrations_open:
             if sms_body.lower().startswith("register") or sms_body.lower().startswith("!register"):
@@ -456,16 +456,16 @@ def webhook_handler() -> flask.Response:
             jpg_included = False
             filename = ""
             sms_body = request.form["Body"]
-            for i in range(int(request.form["NumMedia"])):
-                if request.form[f"MediaContentType{i}"] == "image/jpeg":
+            for i in range(int(request.form.get("NumMedia", 0))):
+                if request.form.get(f"MediaContentType{i}", None) == "image/jpeg":
                     jpg_included = True
-                    response = requests.get(request.form[f"MediaUrl{i}"])
-                    filename = request.form[f"MediaUrl{i}"].split('/')[-1]
+                    response = requests.get(request.form.get(f"MediaUrl{i}", None))
+                    filename = request.form.get(f"MediaUrl{i}", None).split('/')[-1]
                     open(filename, 'wb').write(response.content)
-                elif request.form[f"MediaContentType{i}"] == "text/plain":
-                    sms_body = str(sms_body) + requests.get(request.form[f"MediaUrl{i}"]).text
+                elif request.form.get(f"MediaContentType{i}", None) == "text/plain":
+                    sms_body = str(sms_body) + requests.get(request.form.get(f"MediaUrl{i}", None)).text
                 else:
-                    print("Unsupported media type: " + request.form[f"MediaContentType{i}"])
+                    print("Unsupported media type: " + request.form.get(f"MediaContentType{i}", None))
             attachment_path = os.path.abspath(filename)
             send_post(username, app_password, sms_body, attachment_path=attachment_path)
             if not jpg_included:  # TODO: add support for other image formats
