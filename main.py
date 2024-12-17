@@ -3,8 +3,8 @@ from atprototools import Session
 import requests, os, ast, re, time
 from flask import Flask, request
 from google.cloud import secretmanager
-from atprotocol.bsky import BskyAgent as Client
 from google.cloud import firestore
+from atprotocol.bsky import BskyAgent as Client
 from chump import Application
 
 agent = Client()
@@ -415,6 +415,7 @@ def webhook_handler() -> flask.Response:
                 return flask_response
             else:
                 print("Sender: " + sender + " not registered, and SMS did not start with the word 'register'")
+                print(sms_body)
                 exit(1)
         else:
             print("A registration request was sent while registrations are closed. From: " + sender + ": " + sms_body)
