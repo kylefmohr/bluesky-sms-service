@@ -211,9 +211,10 @@ def username_exists(username) -> bool:
     Returns:
         bool: True if the username exists, False otherwise.
     """
-    client = Client()
     developer_username = bluesky_api_username
     developer_app_password = retrieve_secret(developer_username)
+    client = Client()
+    client.login(developer_username, developer_app_password)
     try:
         client.get_profile(username)
     except Exception as e:
