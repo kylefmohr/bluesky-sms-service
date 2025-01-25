@@ -266,8 +266,9 @@ def register_sender(sender, username, app_password) -> bool:
         else:
             print("App password is not in the correct regex format")
             return False
-    
 
+    #https://atproto.com/specs/handle#:~:text=Handles%20are%20not%20case%2Dsensitive%2C%20and%20should%20be%20normalized%20to%20lowercase%20(that%20is%2C%20normalize%20ASCII%20A%2DZ%20to%20a%2Dz)
+    username = username.lower()
     if not username_exists(username):
         if username.startswith("<"):
             username = username.replace("<","").replace(">","")
