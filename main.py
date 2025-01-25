@@ -259,13 +259,19 @@ def register_sender(sender, username, app_password) -> bool:
     global approved_senders
 
     if not matches_app_password_format(app_password):
-        print("App password is not in the correct regex format")
-        return False
+        if app_password.startswith("<"):
+            app_password = app_password.replace("<","").replace(">","")
+        else:
+            print("App password is not in the correct regex format")
+            return False
     
 
     if not username_exists(username):
-        print("Username does not exist")
-        return False
+        if username.startswith("<"):
+            username = username.replace("<","").replace(">","")
+        else:
+            print("Username does not exist")
+            return False
 
     print("Username validated")
 
