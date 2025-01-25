@@ -22,7 +22,8 @@ TODO:
    ~- Possibly Cloud Firestore~
    
  - Only add a sender (i.e. a bsky username and the associated phone number) iff the secret was successfully registered as well
- - More robust protection preventing people from accidentially posting their app password
+ ~- More robust protection preventing people from accidentially posting their app password~
+ - ^ Right now we have good protection against this at the cost of not currently supporting multiple accounts per phone number. This may come in a later update, but for now, playing it safe.
  - Fix handles not linking properly when you post via this platform ([see this example](https://bsky.app/profile/assf.art/post/3lc4v7dajqs2k))
    - Also, does this apply to normal URLs? If so, fix that too
  - Support for video attachments
