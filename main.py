@@ -193,11 +193,13 @@ def matches_app_password_format(app_password) -> bool:
     Returns:
         bool: True if the app password matches the required format, False otherwise.
     """
-    app_password_format = re.compile(r'[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}')
-    if app_password_format.match(app_password) is None:
-        print("App password is not in the correct format")
-        print("Login passwords are NOT supported")
-        return False
+    # app_password_format = re.compile(r'[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}')
+    # if app_password_format.match(app_password) is None:
+    #     print("App password is not in the correct format")
+    #     print("Login passwords are NOT supported")
+    #     return False
+    
+    # app passwords can be customized now! Just allow whatever
     return True
 
 
@@ -447,16 +449,18 @@ def webhook_handler() -> flask.Response:
                 potential_app_password = sms_body.split(" ")[2]
             except:
                 potential_app_password = None
-            if matches_app_password_format(potential_app_password):
-                print("Registration request sent by registered sender")
-                if registrations_open:
-                    print("Registering new account for known sender")
-                    username = sms_body.split(" ")[1]
-                    app_password = sms_body.split(" ")[2]
-                    developer_app_password = retrieve_secret(bluesky_api_username)
-                    developer_username = bluesky_api_username
-                    resp = register_sender(sender, username, app_password, developer_username, developer_app_password)
-                    return flask_response
+            print("Exiting so we don't accidentially leak somebody's password! Multiple accounts not supported right now, but this is planned")
+            exit()
+            # if matches_app_password_format(potential_app_password):
+            #     print("Registration request sent by registered sender")
+            #     if registrations_open:
+            #         print("Registering new account for known sender")
+            #         username = sms_body.split(" ")[1]
+            #         app_password = sms_body.split(" ")[2]
+            #         developer_app_password = retrieve_secret(bluesky_api_username)
+            #         developer_username = bluesky_api_username
+            #         resp = register_sender(sender, username, app_password, developer_username, developer_app_password)
+            #         return flask_response
         if not media_included:
             send_post(username, app_password, sms_body)
             return flask_response
