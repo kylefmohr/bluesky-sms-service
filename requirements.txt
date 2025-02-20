@@ -1,7 +1,8 @@
-atprototools
+atproto
 requests
 flask
 google-cloud-firestore
 google-cloud-secret-manager
-atprotocol
 chump
+pytest
+pytest-mock

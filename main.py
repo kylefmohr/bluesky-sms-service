@@ -1,13 +1,11 @@
 import flask
-from atprototools import Session
-import requests, os, ast, re, time
+from atproto import Client, models
+import requests, os, ast, re, time, sys
 from flask import Flask, request
 from google.cloud import secretmanager
 from google.cloud import firestore
-from atprotocol.bsky import BskyAgent as Client
 from chump import Application
 
-agent = Client()
 app = Flask(__name__)
 
 registrations_open = True
@@ -17,16 +15,18 @@ global approved_senders  # cloud run's docs says it's chill: https://cloud.googl
 
 def send_pushover_message(message: str) -> None:
     """
-    Send a pushover message to the developer
+    Send a message to Pushover.
 
     Args:
         message (str): The message to send.
     """
-    print("Sending the following message to Pushover: " + message)
+    print(f"Sending the following message to Pushover: {message}")
     app = Application(os.environ.get("PUSHOVER_API_TOKEN"))
     user = app.get_user(os.environ.get("PUSHOVER_USER_KEY"))
-    user.send_message("Bluesky SMS Service", message)
+    message = user.create_message(message, title="Bluesky SMS Service", html=False)
+    message.send()
     return
+
 
 def load_approved_senders() -> list[str]:
     """
@@ -203,9 +203,9 @@ def matches_app_password_format(app_password) -> bool:
     return True
 
 
-def username_exists(username) -> bool:
+def username_exists(username: str) -> bool:
     """
-    Check if the given username exists.
+    Check if a username exists on Bluesky.
 
     Args:
         username (str): The username to check.
@@ -213,38 +213,33 @@ def username_exists(username) -> bool:
     Returns:
         bool: True if the username exists, False otherwise.
     """
-    developer_username = bluesky_api_username
-    developer_app_password = retrieve_secret(developer_username)
-    client = Client()
-    client.login(developer_username, developer_app_password)
     try:
-        client.get_profile(username)
+        client = Client()
+        response = client.com.atproto.identity.resolve_handle({'handle': username})
+        return bool(response.did)
     except Exception as e:
-        print(e)
-        print("Username does not exist")
+        print(f"Error checking username existence: {e}")
         return False
-    return True
 
 
-def valid_app_password(username, app_password) -> bool:
+def valid_app_password(username: str, app_password: str) -> bool:
     """
-    Check if the given app password is valid for the given username.
+    Validate an app password for a given username.
 
     Args:
-        username (str): The username.
-        app_password (str): The app password to check.
+        username (str): The username to validate.
+        app_password (str): The app password to validate.
 
     Returns:
         bool: True if the app password is valid, False otherwise.
     """
-    client = Client()
     try:
+        client = Client()
         client.login(username, app_password)
+        return True
     except Exception as e:
-        print(e)
+        print(f"Error validating app password: {e}")
         return False
-    return True
-
 
 
 def register_sender(sender, username, app_password) -> bool:
@@ -321,7 +316,7 @@ def cleanup_jpgs() -> None:
             os.remove(filename)
 
 
-def send_post(username, app_password, body, reply_ref=None, attachment_path=None) -> dict:
+def send_post(username: str, app_password: str, body: str, reply_ref=None, attachment_path=None) -> dict:
     """
     Send a post to Bluesky.
 
@@ -335,49 +330,52 @@ def send_post(username, app_password, body, reply_ref=None, attachment_path=None
     Returns:
         dict: The response from the Bluesky API.
     """
-    if len(body) > 300:  # maximum post length, otherwise we'll thread it
-        last_page = False
-        full_reply_ref = None
-        while not last_page:
-            if reply_ref is None:
-                parent_response = send_post(username, app_password, body[:300], attachment_path=attachment_path)  # only post attachment on the first post of a thread
-                full_reply_ref = {"root": parent_response, "parent": parent_response}
-            else:
-                response = send_post(username, app_password, body[:300], reply_ref=reply_ref)
-                full_reply_ref = {"root": reply_ref["root"], "parent": response}
-            body = body[300:]
-            if len(body) <= 300:
-                last_page = True
-        response = send_post(username, app_password, body, reply_ref=full_reply_ref)
-        return response
+    try:
+        client = Client()
+        client.login(username, app_password)
 
-    session = Session(username, app_password)
-    if reply_ref is None:
-        if attachment_path is None:
-            response = session.postBloot(body)
-            print(username + ": " + body)
-            print(response)
-            print(response.json())
-        else:  # handle attachment
-            response = session.postBloot(body, attachment_path)
-            print(username + ": " + body + " with attachment: " + attachment_path)
-            print(response)
-            print(response.json())
-            cleanup_jpgs()
+        # Create the post record
+        record = {
+            'text': body,
+            'createdAt': time.time()
+        }
 
-    else:
-        full_reply_ref = reply_ref
-        response = session.postBloot(body, reply_to=full_reply_ref)
+        # If this is a reply, add the reply reference
+        if reply_ref:
+            record['reply'] = reply_ref
 
-    return response.json()
+        # If there's an attachment, add it
+        if attachment_path:
+            with open(attachment_path, 'rb') as f:
+                upload = client.com.atproto.repo.upload_blob(f)
+                record['embed'] = {
+                    '$type': 'app.bsky.embed.images',
+                    'images': [{
+                        'alt': 'Uploaded image',
+                        'image': upload.blob
+                    }]
+                }
+
+        # Send the post
+        response = client.com.atproto.repo.create_record({
+            'repo': client.me.did,
+            'collection': 'app.bsky.feed.post',
+            'record': record
+        })
+
+        return {'uri': response.uri, 'cid': response.cid}
+
+    except Exception as e:
+        send_pushover_message(f"Error sending post: {e}")
+        raise
 
 
-def unregister_sender(sender, username=None) -> bool:
+def unregister_sender(sender: str, username: str = None) -> bool:
     """
     Unregister a sender from the Firestore database and delete their secret from the Google Cloud Secret Manager.
 
     Args:
-        sender (str): The phone number of the sender.
+        sender (str): The phone number of the sender.   
         username (str): The Bluesky username of the sender. If it is not specified, uses the first username associated with the sender's phone
 
     Returns:
@@ -425,10 +423,10 @@ def webhook_handler() -> flask.Response:
             else:
                 print("Sender: " + sender + " not registered, and SMS did not start with the word 'register'")
                 print(sms_body)
-                exit(1)
+                sys.exit(1)
         else:
             print("A registration request was sent while registrations are closed. From: " + sender + ": " + sms_body)
-            exit(1)
+            sys.exit(1)
     else:  # Sender is in approved senders
         username = retrieve_username(sender)
         app_password = retrieve_secret(username)
@@ -444,14 +442,14 @@ def webhook_handler() -> flask.Response:
                 return flask_response
             else:
                 print("Unregister username does not match registered username")
-                exit(1)
+                sys.exit(1)
         elif sms_body.startswith("!register") or sms_body.startswith("register"):
             try:
                 potential_app_password = sms_body.split(" ")[2]
             except:
                 potential_app_password = None
             print("Exiting so we don't accidentially leak somebody's password! Multiple accounts not supported right now, but this is planned")
-            exit()
+            sys.exit(1)
             # if matches_app_password_format(potential_app_password):
             #     print("Registration request sent by registered sender")
             #     if registrations_open:
