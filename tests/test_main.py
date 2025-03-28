@@ -25,8 +25,12 @@ while not all([PROJECT_ID, PUSHOVER_API_TOKEN, PUSHOVER_USER_KEY]):
     PROJECT_ID = os.environ.get('PROJECT_ID')
     PUSHOVER_API_TOKEN = os.environ.get('PUSHOVER_API_TOKEN')
     PUSHOVER_USER_KEY = os.environ.get('PUSHOVER_USER_KEY')
-    if not all([PROJECT_ID, PUSHOVER_API_TOKEN, PUSHOVER_USER_KEY]):
-        input("One or more environment variables are missing, press Enter to try again")
+    if not PROJECT_ID:
+        print("PROJECT_ID is missing")
+    if not PUSHOVER_API_TOKEN:
+        print("PUSHOVER_API_TOKEN is missing")
+    if not PUSHOVER_USER_KEY:
+        print("PUSHOVER_USER_KEY is missing")
 
 # Initialize global variables
 import main
