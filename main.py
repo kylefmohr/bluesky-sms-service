@@ -317,74 +317,27 @@ def cleanup_jpgs() -> None:
             os.remove(filename)
 
 
-def parse_mentions(text: str) -> List[Dict]:
-    spans = []
+def parse_mentions(text_builder: client_utils.TextBuilder, text: str) -> client_utils.TextBuilder:
     # regex based on: https://atproto.com/specs/handle#handle-identifier-syntax
     mention_regex = rb"[$|\W](@([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)"
     text_bytes = text.encode("UTF-8")
     for m in re.finditer(mention_regex, text_bytes):
-        spans.append({
-            "start": m.start(1),
-            "end": m.end(1),
-            "handle": m.group(1)[1:].decode("UTF-8")
-        })
-    return spans
+        text_builder.mention(m.group(1)[1:].decode("UTF-8"), m.group(1)[1:].decode("UTF-8"))
+    return text_builder
 
-def parse_urls(text: str) -> List[Dict]:
-    spans = []
+def parse_urls(text_builder: client_utils.TextBuilder, text: str) -> client_utils.TextBuilder:
     # partial/naive URL regex based on: https://stackoverflow.com/a/3809435
     # tweaked to disallow some training punctuation
     url_regex = rb"[$|\W](https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*[-a-zA-Z0-9@%_\+~#//=])?)"
     text_bytes = text.encode("UTF-8")
     for m in re.finditer(url_regex, text_bytes):
-        spans.append({
-            "start": m.start(1),
-            "end": m.end(1),
-            "url": m.group(1).decode("UTF-8"),
-        })
-    return spans
+        text_builder.link(m.group(1).decode("UTF-8"), m.group(1).decode("UTF-8"))
+    return text_builder
     
-# Parse facets from text and resolve the handles to DIDs
-def parse_facets(text: str) -> List[Dict]:
-    facets = []
-    for m in parse_mentions(text):
-        try:
-            resp = requests.get(
-                "https://bsky.social/xrpc/com.atproto.identity.resolveHandle",
-                params={"handle": m["handle"]},
-            )
-            # If the handle can't be resolved, just skip it!
-            # It will be rendered as text in the post instead of a link
-            if resp.status_code == 400:
-                continue
-            did = resp.json()["did"]
-            facets.append({
-                "index": {
-                    "byteStart": m["start"],
-                    "byteEnd": m["end"],
-                },
-                "features": [{"$type": "app.bsky.richtext.facet#mention", "did": did}],
-            })
-        except Exception as e:
-            print(f"Error resolving handle {m['handle']}: {e}")
-            # Skip this mention if there's an error
-            continue
-            
-    for u in parse_urls(text):
-        facets.append({
-            "index": {
-                "byteStart": u["start"],
-                "byteEnd": u["end"],
-            },
-            "features": [
-                {
-                    "$type": "app.bsky.richtext.facet#link",
-                    # NOTE: URI ("I") not URL ("L")
-                    "uri": u["url"],
-                }
-            ],
-        })
-    return facets
+def parse_facets(text_builder: client_utils.TextBuilder, text: str) -> client_utils.TextBuilder:
+    text_builder = parse_mentions(text_builder, text)
+    text_builder = parse_urls(text_builder, text)
+    return text_builder
 
 def send_post(username: str, app_password: str, body: str, reply_ref=None, attachment_path=None) -> dict:
     """
@@ -407,6 +360,7 @@ def send_post(username: str, app_password: str, body: str, reply_ref=None, attac
         # Use TextBuilder to properly handle URLs and mentions
         text_builder = client_utils.TextBuilder()
         text_builder.text(body)
+        text_builder = parse_facets(text_builder, body)
 
         # If there's an attachment
         if attachment_path:
