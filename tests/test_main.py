@@ -11,27 +11,21 @@ PROJECT_ID = None
 PUSHOVER_API_TOKEN = None
 PUSHOVER_USER_KEY = None
 
-load_dotenv(override=True)
-# Load environment variables
-try:
-    PROJECT_ID = os.environ['PROJECT_ID']
-    PUSHOVER_API_TOKEN = os.environ['PUSHOVER_API_TOKEN']
-    PUSHOVER_USER_KEY = os.environ['PUSHOVER_USER_KEY']
-except:
-    print("One or more environment variables are missing")
+# Load environment variables from .env file
+load_dotenv()
 
-# Keep trying to load from .env until we have all variables
-while not all([PROJECT_ID, PUSHOVER_API_TOKEN, PUSHOVER_USER_KEY]):
-    load_dotenv(override=True)
-    PROJECT_ID = os.environ.get('PROJECT_ID')
-    PUSHOVER_API_TOKEN = os.environ.get('PUSHOVER_API_TOKEN')
-    PUSHOVER_USER_KEY = os.environ.get('PUSHOVER_USER_KEY')
-    if not PROJECT_ID:
-        print("PROJECT_ID is missing")
-    if not PUSHOVER_API_TOKEN:
-        print("PUSHOVER_API_TOKEN is missing")
-    if not PUSHOVER_USER_KEY:
-        print("PUSHOVER_USER_KEY is missing")
+# Get environment variables
+PROJECT_ID = os.environ.get('PROJECT_ID')
+PUSHOVER_API_TOKEN = os.environ.get('PUSHOVER_API_TOKEN')
+PUSHOVER_USER_KEY = os.environ.get('PUSHOVER_USER_KEY')
+
+# Print which variables are missing (for debugging)
+if not PROJECT_ID:
+    print("PROJECT_ID is missing")
+if not PUSHOVER_API_TOKEN:
+    print("PUSHOVER_API_TOKEN is missing")
+if not PUSHOVER_USER_KEY:
+    print("PUSHOVER_USER_KEY is missing")
 
 # Initialize global variables
 import main
