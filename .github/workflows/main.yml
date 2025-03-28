@@ -23,6 +23,10 @@ jobs:
         pip install -r requirements.txt
 
     - name: Run tests
+      env:
+        PROJECT_ID: ${{ secrets.PROJECT_ID }}
+        PUSHOVER_API_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
+        PUSHOVER_USER_KEY: ${{ secrets.PUSHOVER_USER_KEY }}
       run: |
         pytest tests/
 
