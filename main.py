@@ -404,42 +404,30 @@ def send_post(username: str, app_password: str, body: str, reply_ref=None, attac
         client = Client()
         client.login(username, app_password)
 
-        # Parse facets for URLs and mentions
-        facets = parse_facets(body)
+        # Use TextBuilder to properly handle URLs and mentions
+        text_builder = client_utils.TextBuilder()
+        text_builder.text(body)
 
-        # Create the post record
-        record = {
-            'text': body,
-            'createdAt': time.time()
-        }
-        
-        # Add facets if we found any
-        if facets:
-            record['facets'] = facets
-
-        # If this is a reply, add the reply reference
-        if reply_ref:
-            record['reply'] = reply_ref
-
-        # If there's an attachment, add it
+        # If there's an attachment
         if attachment_path:
             with open(attachment_path, 'rb') as f:
-                upload = client.com.atproto.repo.upload_blob(f)
-                record['embed'] = {
-                    '$type': 'app.bsky.embed.images',
-                    'images': [{
-                        'alt': 'Uploaded image',
-                        'image': upload.blob
-                    }]
-                }
+                # Pass the TextBuilder and attachment directly to the send_post method
+                response = client.send_post(
+                    text=text_builder,
+                    image=f,
+                    image_alt="Uploaded image"
+                )
+        else:
+            # Without attachment, just pass the TextBuilder
+            if reply_ref:
+                response = client.send_post(
+                    text=text_builder,
+                    reply_to=reply_ref
+                )
+            else:
+                response = client.send_post(text=text_builder)
 
-        # Send the post
-        response = client.com.atproto.repo.create_record({
-            'repo': client.me.did,
-            'collection': 'app.bsky.feed.post',
-            'record': record
-        })
-
+        # Extract URI and CID from the response
         return {'uri': response.uri, 'cid': response.cid}
 
     except Exception as e:
