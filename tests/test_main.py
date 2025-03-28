@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 import os
 import json
 from main import app, username_exists, valid_app_password, send_post, add_sender, retrieve_secret
+from atproto import client_utils
 from dotenv import load_dotenv
 from chump import Application
 
@@ -119,20 +120,26 @@ def test_valid_app_password_failure(mock_atproto_client):
 @patch('main.time')
 def test_send_post_success(mock_time, mock_atproto_client):
     """Test send_post with successful post"""
-    mock_time.time.return_value = 1234567890
+    # Set up the mock return values for the client.send_post response
+    mock_response = MagicMock()
+    mock_response.uri = "test_uri"
+    mock_response.cid = "test_cid"
+    mock_atproto_client.return_value.send_post.return_value = mock_response
     
     result = send_post("test.user", "test-password", "Hello, world!")
     
     assert result == {"uri": "test_uri", "cid": "test_cid"}
+    
+    # Verify login was called
     mock_atproto_client.return_value.login.assert_called_once_with("test.user", "test-password")
-    mock_atproto_client.return_value.com.atproto.repo.create_record.assert_called_once_with({
-        'repo': 'test_did',
-        'collection': 'app.bsky.feed.post',
-        'record': {
-            'text': 'Hello, world!',
-            'createdAt': mock_time.time.return_value
-        }
-    })
+    
+    # Verify send_post was called with a TextBuilder instance
+    # Get the args from the call
+    args, kwargs = mock_atproto_client.return_value.send_post.call_args
+    
+    # Check that the text argument is a TextBuilder
+    assert 'text' in kwargs
+    assert isinstance(kwargs['text'], client_utils.TextBuilder)
 
 @patch('main.load_approved_senders')
 @patch('main.sys.exit')
