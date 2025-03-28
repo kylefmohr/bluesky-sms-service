@@ -11,6 +11,7 @@ PROJECT_ID = None
 PUSHOVER_API_TOKEN = None
 PUSHOVER_USER_KEY = None
 
+load_dotenv(override=True)
 # Load environment variables
 try:
     PROJECT_ID = os.environ['PROJECT_ID']
