@@ -319,7 +319,7 @@ def cleanup_jpgs() -> None:
 
 def parse_mentions(text_builder: client_utils.TextBuilder, text: str) -> client_utils.TextBuilder:
     # regex based on: https://atproto.com/specs/handle#handle-identifier-syntax
-    mention_regex = rb"[$|\W](@([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)"
+    mention_regex = rb"(?:[$|\W])(@([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)"
     text_bytes = text.encode("UTF-8")
     for m in re.finditer(mention_regex, text_bytes):
         text_builder.mention(m.group(1)[1:].decode("UTF-8"), m.group(1)[1:].decode("UTF-8"))
@@ -328,7 +328,7 @@ def parse_mentions(text_builder: client_utils.TextBuilder, text: str) -> client_
 def parse_urls(text_builder: client_utils.TextBuilder, text: str) -> client_utils.TextBuilder:
     # partial/naive URL regex based on: https://stackoverflow.com/a/3809435
     # tweaked to disallow some training punctuation
-    url_regex = rb"[$|\W](https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*[-a-zA-Z0-9@%_\+~#//=])?)"
+    url_regex = rb"(?:[$|\W])(https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*[-a-zA-Z0-9@%_\+~#//=])?)"
     text_bytes = text.encode("UTF-8")
     for m in re.finditer(url_regex, text_bytes):
         text_builder.link(m.group(1).decode("UTF-8"), m.group(1).decode("UTF-8"))
