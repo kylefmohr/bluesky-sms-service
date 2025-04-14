@@ -397,7 +397,7 @@ def parse_facets(text: str) -> client_utils.TextBuilder:
     mentions = list(re.finditer(mention_regex, text))
     
     # Enhanced URL regex to catch domains with and without protocols
-    url_regex = r"(https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*[-a-zA-Z0-9@%_\+~#//=])?|(?<!\S)[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*[-a-zA-Z0-9@%_\+~#//=])?)"
+    url_regex = r"(https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*[-a-zA-Z0-9@%_\+~#//=])?|(?<!\S|@)[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*[-a-zA-Z0-9@%_\+~#//=])?)"
     urls = list(re.finditer(url_regex, text))
     
     # If no facets found, just return a TextBuilder with the original text
@@ -410,26 +410,44 @@ def parse_facets(text: str) -> client_utils.TextBuilder:
     resolver = IdResolver()
     facets = []
     
+    # Process mentions first
+    mention_ranges = []
     for mention in mentions:
         username = mention.group(1)
+        start = mention.start()
+        end = mention.end()
+        mention_ranges.append((start, end))
         facets.append({
             'type': 'mention',
-            'start': mention.start(),
-            'end': mention.end(),
+            'start': start,
+            'end': end,
             'username': username,
             'did': resolver.handle.resolve(username)
         })
     
+    # Now process URLs, but skip any that overlap with mention ranges
     for url_match in urls:
         url = url_match.group(0)
-        link_url = url if url.startswith(('http://', 'https://')) else f'https://{url}'
-        facets.append({
-            'type': 'link',
-            'start': url_match.start(),
-            'end': url_match.end(),
-            'text': url,
-            'uri': link_url
-        })
+        start = url_match.start()
+        end = url_match.end()
+        
+        # Check if this URL overlaps with any mention
+        overlaps = False
+        for m_start, m_end in mention_ranges:
+            # Check for any kind of overlap
+            if (start >= m_start and start < m_end) or (end > m_start and end <= m_end) or (start <= m_start and end >= m_end):
+                overlaps = True
+                break
+        
+        if not overlaps:
+            link_url = url if url.startswith(('http://', 'https://')) else f'https://{url}'
+            facets.append({
+                'type': 'link',
+                'start': start,
+                'end': end,
+                'text': url,
+                'uri': link_url
+            })
     
     # Sort facets by their start position
     facets.sort(key=lambda x: x['start'])
