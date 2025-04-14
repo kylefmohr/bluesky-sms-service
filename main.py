@@ -1,5 +1,5 @@
 import flask
-from atproto import Client, models, client_utils
+from atproto import Client, models, client_utils, IdResolver
 import requests, os, ast, re, time, sys
 from flask import Flask, request
 from google.cloud import secretmanager
@@ -318,22 +318,71 @@ def cleanup_jpgs() -> None:
 
 
 def parse_mentions(text_builder: client_utils.TextBuilder, text: str) -> client_utils.TextBuilder:
-    # regex based on: https://atproto.com/specs/handle#handle-identifier-syntax
-    mention_regex = rb"(?:[$|\W])(@([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)"
-    text_bytes = text.encode("UTF-8")
-    for m in re.finditer(mention_regex, text_bytes):
-        text_builder.mention(m.group(1)[1:].decode("UTF-8"), m.group(1)[1:].decode("UTF-8"))
-    return text_builder
+    # Create a new TextBuilder to build the result with proper mentions
+    new_text_builder = client_utils.TextBuilder()
+    
+    # regex to find mentions in the format @username.domain
+    mention_regex = r'@([a-zA-Z0-9]+\.[a-zA-Z0-9]{2,})'
+    resolver = IdResolver()
+    
+    # Start position for the next segment
+    last_end = 0
+    
+    for mention in re.finditer(mention_regex, text):
+        # Extract the username without the @ symbol
+        username = mention.group(1)
+        
+        # Add the text before the mention
+        new_text_builder.text(text[last_end:mention.start()])
+        
+        # Add the mention
+        new_text_builder.mention(username, resolver.handle.resolve(username))
+        
+        # Update the position
+        last_end = mention.end()
+    
+    # Add any remaining text after the last mention
+    new_text_builder.text(text[last_end:])
+    
+    return new_text_builder
+    
 
 def parse_urls(text_builder: client_utils.TextBuilder, text: str) -> client_utils.TextBuilder:
+    # Create a new TextBuilder to build the result with proper links
+    new_text_builder = client_utils.TextBuilder()
+    
     # partial/naive URL regex based on: https://stackoverflow.com/a/3809435
     # tweaked to disallow some training punctuation
     url_regex = rb"(?:[$|\W])(https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*[-a-zA-Z0-9@%_\+~#//=])?)"
     text_bytes = text.encode("UTF-8")
-    for m in re.finditer(url_regex, text_bytes):
-        text_builder.link(m.group(1).decode("UTF-8"), m.group(1).decode("UTF-8"))
-    return text_builder
     
+    # Start position for the next segment
+    last_end = 0
+    
+    for m in re.finditer(url_regex, text_bytes):
+        url = m.group(1).decode("UTF-8")
+        # For the prefix character and url match, we need to handle byte positions
+        full_match_start = m.start(0)
+        url_match_start = m.start(1)
+        
+        # Get the text before the URL (excluding the prefix character)
+        if last_end < full_match_start:
+            prefix_text = text_bytes[last_end:full_match_start+1].decode("UTF-8")
+            new_text_builder.text(prefix_text)
+        
+        # Add the link
+        new_text_builder.link(url, url)
+        
+        # Update the position
+        last_end = m.end(1)
+    
+    # Add any remaining text after the last URL
+    if last_end < len(text_bytes):
+        new_text_builder.text(text_bytes[last_end:].decode("UTF-8"))
+    
+    return new_text_builder
+
+
 def parse_facets(text_builder: client_utils.TextBuilder, text: str) -> client_utils.TextBuilder:
     text_builder = parse_mentions(text_builder, text)
     text_builder = parse_urls(text_builder, text)
