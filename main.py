@@ -393,7 +393,7 @@ def parse_facets(text: str) -> client_utils.TextBuilder:
     # both mentions and URLs, then insert them in order
     
     # Find all mentions
-    mention_regex = r'@([a-zA-Z0-9]+\.[a-zA-Z0-9]{2,})'
+    mention_regex = r'(@[a-zA-Z0-9]+\.[a-zA-Z0-9]{2,})'
     mentions = list(re.finditer(mention_regex, text))
     
     # Enhanced URL regex to catch domains with and without protocols
