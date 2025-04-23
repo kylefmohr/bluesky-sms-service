@@ -317,66 +317,6 @@ def cleanup_jpgs() -> None:
             os.remove(filename)
 
 
-def parse_mentions(text: str) -> client_utils.TextBuilder:
-    # Create a TextBuilder to build the result with proper mentions
-    text_builder = client_utils.TextBuilder()
-    
-    # regex to find mentions in the format @username.domain
-    mention_regex = r'@([a-zA-Z0-9]+\.[a-zA-Z0-9]{2,})'
-    resolver = IdResolver()
-    
-    # Start position for the next segment
-    last_end = 0
-    
-    for mention in re.finditer(mention_regex, text):
-        # Extract the username without the @ symbol
-        username = mention.group(1)
-        
-        # Add the text before the mention
-        text_builder.text(text[last_end:mention.start()])
-        
-        # Add the mention
-        text_builder.mention(username, resolver.handle.resolve(username))
-        
-        # Update the position
-        last_end = mention.end()
-    
-    # Add any remaining text after the last mention
-    text_builder.text(text[last_end:])
-    
-    return text_builder
-    
-
-def parse_urls(text: str) -> client_utils.TextBuilder:
-    # Create a TextBuilder to build the result with proper links
-    text_builder = client_utils.TextBuilder()
-    
-    # Enhanced URL regex to catch domains with and without protocols
-    # Will catch things like "x.com" as well as "https://x.com"
-    url_regex = r"(https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*[-a-zA-Z0-9@%_\+~#//=])?|(?<!\S)[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*[-a-zA-Z0-9@%_\+~#//=])?)"
-    
-    # Start position for the next segment
-    last_end = 0
-    
-    for m in re.finditer(url_regex, text):
-        url = m.group(0)
-        
-        # Add http:// prefix if it's missing
-        link_url = url if url.startswith(('http://', 'https://')) else f'https://{url}'
-        
-        # Add the text before the URL
-        text_builder.text(text[last_end:m.start()])
-        
-        # Add the link
-        text_builder.link(url, link_url)
-        
-        # Update the position
-        last_end = m.end()
-    
-    # Add any remaining text after the last URL
-    text_builder.text(text[last_end:])
-    
-    return text_builder
 
 
 def parse_facets(text: str) -> client_utils.TextBuilder:
@@ -393,7 +333,7 @@ def parse_facets(text: str) -> client_utils.TextBuilder:
     # both mentions and URLs, then insert them in order
     
     # Find all mentions
-    mention_regex = r'(@[a-zA-Z0-9]+\.[a-zA-Z0-9]{2,})'
+    mention_regex = r'@([a-zA-Z0-9]+\.[a-zA-Z0-9]{2,})'
     mentions = list(re.finditer(mention_regex, text))
     
     # Enhanced URL regex to catch domains with and without protocols
@@ -463,7 +403,7 @@ def parse_facets(text: str) -> client_utils.TextBuilder:
         
         # Add the facet
         if facet['type'] == 'mention':
-            text_builder.mention(facet['username'], facet['did'])
+            text_builder.mention('@' + facet['username'], facet['did']) # add @ symbol back
         elif facet['type'] == 'link':
             text_builder.link(facet['text'], facet['uri'])
         
