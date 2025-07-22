@@ -16,7 +16,7 @@ Let me know if you run into issues, you can raise an issue here or contact me vi
 Simply text `!unregister <your bsky.social handle>` to `+1-414-432-4321`, and your account will be unregistered. For example, you might send `!unregister dril.bsky.social` to `414-432-4321`, and your account information will be removed from this service.
 
 
-TODO:
+### TODO:
 
  ~- Move off of BigQuery, as it wasn't the right choice, especially due to the inability to delete entries for the first 90 minutes after they were created.~
    ~- Possibly Cloud Firestore~
@@ -24,7 +24,7 @@ TODO:
  - Only add a sender (i.e. a bsky username and the associated phone number) iff the secret was successfully registered as well
  ~- More robust protection preventing people from accidentially posting their app password~
  - ^ Right now we have good protection against this at the cost of not currently supporting multiple accounts per phone number. This may come in a later update, but for now, playing it safe.
- - Fix handles not linking properly when you post via this platform ([see this example](https://bsky.app/profile/assf.art/post/3lc4v7dajqs2k))
-   - Also, does this apply to normal URLs? If so, fix that too
+ - ~Fix handles not linking properly when you post via this platform ([see this example](https://bsky.app/profile/assf.art/post/3lc4v7dajqs2k))~
+   - ~Also, does this apply to normal URLs? If so, fix that too~
  - Support for video attachments
  
