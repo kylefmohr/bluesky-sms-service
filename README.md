@@ -18,13 +18,16 @@ Simply text `!unregister <your bsky.social handle>` to `+1-414-432-4321`, and yo
 
 ### TODO:
 
- ~- Move off of BigQuery, as it wasn't the right choice, especially due to the inability to delete entries for the first 90 minutes after they were created.~
-   ~- Possibly Cloud Firestore~
+ - ~Move off of BigQuery, as it wasn't the right choice, especially due to the inability to delete entries for the first 90 minutes after they were created.~
+   - ~Possibly Cloud Firestore~ Done
+ - Use something better than Secret Manager as I don't think this is the right use-case for that service. Maybe OAuth?
+   - I am actually able to send outbound messages from this number now. It could be feasible to have people send this script their username only, and then it responds with a sign-in link (if I am understanding OAuth correctly). I've never implemented OAuth before, so this may take time
+   - Also if I do that, I'd like there to be no breaking changes for current users. Either by supporting both passwords *and* OAuth, or by transitioning these people to OAuth behind the scenes. 
    
- - Only add a sender (i.e. a bsky username and the associated phone number) iff the secret was successfully registered as well
  ~- More robust protection preventing people from accidentially posting their app password~
  - ^ Right now we have good protection against this at the cost of not currently supporting multiple accounts per phone number. This may come in a later update, but for now, playing it safe.
  - ~Fix handles not linking properly when you post via this platform ([see this example](https://bsky.app/profile/assf.art/post/3lc4v7dajqs2k))~
    - ~Also, does this apply to normal URLs? If so, fix that too~
  - Support for video attachments
+   - Maybe. This is a very low priority: videos sent using MMS are extremely compressed, take a long time to send, and are more pricey to receive. 
  
