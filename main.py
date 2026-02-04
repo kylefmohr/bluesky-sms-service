@@ -28,6 +28,18 @@ def send_pushover_message(message: str) -> None:
     message.send()
     return
 
+def get_handle_from_did(did: str) -> str:
+    """
+    Resolves a DID to the current handle using a public unauthenticated request.
+    """
+    public_client = Client() # This request can be unauthenticated
+    try:
+        response = public_client.com.atproto.repo.describe_repo({'repo': did})
+        return response.handle
+    except Exception as e:
+        print(f"Could not resolve DID {did}: {e}")
+        return None
+
 
 def load_approved_senders() -> list[str]:
     """
@@ -45,13 +57,14 @@ def load_approved_senders() -> list[str]:
     print("Approved senders loaded: " + str(approved_senders))
     return approved_senders
 
-def add_sender(sender, username) -> bool:
+def add_sender(sender, username, did=None) -> bool:
     """
     Add a new sender to the Firestore database.
 
     Args:
         sender (str): The phone number of the sender.
         username (str): The Bluesky username of the sender.
+        did (str, optional): The DID of the user.
 
     Returns:
         bool: True if the sender was successfully added, False otherwise.
@@ -60,13 +73,17 @@ def add_sender(sender, username) -> bool:
     db = firestore.Client(project=os.environ.get("PROJECT_ID"), database="bluesky-registrations")
     # Create a new document with sender (phone) as the document ID
     doc_ref = db.collection("bluesky-registrations").document(sender)
-    doc_ref.set({
+    data = {
         "username": username,
         "timestamp": firestore.SERVER_TIMESTAMP  # Use server timestamp for consistency
-    })
+    }
+    if did:
+        data["did"] = did
+        
+    doc_ref.set(data)
     if sender not in approved_senders:
         approved_senders.append(sender)
-    print(f"Added sender {sender} with username {username}")
+    print(f"Added sender {sender} with username {username} and did {did}")
     return True
 
 def delete_sender(sender, username=None) -> bool:
@@ -166,21 +183,21 @@ def retrieve_secret(username) -> dict:
     return secret_value
 
 
-def retrieve_username(sender) -> str:
+def retrieve_user_info(sender) -> dict:
     """
-    Retrieve the Bluesky username for a given sender from the Firestore database.
+    Retrieve the Bluesky user info for a given sender from the Firestore database.
 
     Args:
         sender (str): The phone number of the sender.
 
     Returns:
-        str: The Bluesky username of the sender, or None if not found.
+        dict: A dictionary containing 'username' and 'did' (if available), or None if not found.
     """
     db = firestore.Client(project=os.environ.get("PROJECT_ID"), database="bluesky-registrations")
     # Get the document with sender (phone) as the document ID
     doc = db.collection("bluesky-registrations").document(sender).get()
     if doc.exists:
-        return doc.get("username")
+        return doc.to_dict()
     return None
 
 
@@ -204,7 +221,7 @@ def matches_app_password_format(app_password) -> bool:
     return True
 
 
-def username_exists(username: str) -> bool:
+def username_exists(username: str) -> str:
     """
     Check if a username exists on Bluesky.
 
@@ -212,15 +229,15 @@ def username_exists(username: str) -> bool:
         username (str): The username to check.
 
     Returns:
-        bool: True if the username exists, False otherwise.
+        str: The DID if the username exists, None otherwise.
     """
     try:
         client = Client()
         response = client.com.atproto.identity.resolve_handle({'handle': username})
-        return bool(response.did)
+        return response.did
     except Exception as e:
         print(f"Error checking username existence: {e}")
-        return False
+        return None
 
 
 def valid_app_password(username: str, app_password: str) -> bool:
@@ -265,10 +282,14 @@ def register_sender(sender, username, app_password) -> bool:
 
     #https://atproto.com/specs/handle#:~:text=Handles%20are%20not%20case%2Dsensitive%2C%20and%20should%20be%20normalized%20to%20lowercase%20(that%20is%2C%20normalize%20ASCII%20A%2DZ%20to%20a%2Dz)
     username = username.lower()
-    if not username_exists(username):
+    
+    did = username_exists(username)
+    if not did:
         if username.startswith("<"):
             username = username.replace("<","").replace(">","")
-        else:
+            did = username_exists(username)
+        
+        if not did:
             print("Username does not exist")
             return False
 
@@ -278,7 +299,7 @@ def register_sender(sender, username, app_password) -> bool:
         print("App password is not valid, could not log in as " + username)
         return False
 
-    if add_sender(sender, username):
+    if add_sender(sender, username, did):
         print("Successfully added sender to database")
     else:
         print("Failed to add sender to database")
@@ -455,7 +476,7 @@ def send_post(username: str, app_password: str, body: str, reply_ref=None, attac
                 )
             else:
                 response = client.send_post(text=text_builder)
-
+        print("Post from " + username + " sent successfully: " + str(body))
         # Extract URI and CID from the response
         return {'uri': response.uri, 'cid': response.cid}
 
@@ -477,7 +498,8 @@ def unregister_sender(sender: str, username: str = None) -> bool:
     """
     global approved_senders
     if username is None:
-        username = retrieve_username(sender)
+        user_info = retrieve_user_info(sender)
+        username = user_info.get("username") if user_info else None
     if delete_sender(sender, username):
         print("Successfully deleted sender from database")
     else:
@@ -522,8 +544,17 @@ def webhook_handler() -> flask.Response:
             print("A registration request was sent while registrations are closed. From: " + sender + ": " + sms_body)
             sys.exit(1)
     else:  # Sender is in approved senders
-        username = retrieve_username(sender)
+        user_info = retrieve_user_info(sender)
+        username = user_info.get("username")
+        did = user_info.get("did")
         app_password = retrieve_secret(username)
+        
+        current_handle = username
+        if did:
+            resolved_handle = get_handle_from_did(did)
+            if resolved_handle:
+                current_handle = resolved_handle
+
         if sms_body.lower().startswith("!unregister"):
             try:
                 unregister_username = sms_body.split(" ")[1]
@@ -555,7 +586,7 @@ def webhook_handler() -> flask.Response:
             #         resp = register_sender(sender, username, app_password, developer_username, developer_app_password)
             #         return flask_response
         if not media_included:
-            send_post(username, app_password, sms_body)
+            send_post(current_handle, app_password, sms_body)
             return flask_response
         elif media_included:
             jpg_included = False
@@ -572,7 +603,7 @@ def webhook_handler() -> flask.Response:
                 else:
                     print("Unsupported media type: " + request.form.get(f"MediaContentType{i}", None))
             attachment_path = os.path.abspath(filename)
-            send_post(username, app_password, sms_body, attachment_path=attachment_path)
+            send_post(current_handle, app_password, sms_body, attachment_path=attachment_path)
             if not jpg_included:  # TODO: add support for other image formats
                 print("Not a jpg")
                 return flask_response

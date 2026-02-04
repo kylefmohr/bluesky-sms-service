@@ -94,7 +94,7 @@ def mock_atproto_client():
 def test_username_exists_valid(mock_atproto_client):
     """Test username_exists with a valid username"""
     result = username_exists("valid.user")
-    assert result is True
+    assert result == "test_did"
     mock_atproto_client.return_value.com.atproto.identity.resolve_handle.assert_called_once_with(
         {'handle': 'valid.user'}
     )
@@ -103,7 +103,7 @@ def test_username_exists_invalid(mock_atproto_client):
     """Test username_exists with an invalid username"""
     mock_atproto_client.return_value.com.atproto.identity.resolve_handle.side_effect = Exception("User not found")
     result = username_exists("invalid.user")
-    assert result is False
+    assert result is None
 
 def test_valid_app_password_success(mock_atproto_client):
     """Test valid_app_password with valid credentials"""
