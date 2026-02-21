@@ -3,7 +3,8 @@ name: Test and Deploy to Google Cloud Run
 on:
   push:
     branches:
-      - main, oauth
+      - main
+      - oauth
 
 jobs:
   test:
