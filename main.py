@@ -50,7 +50,7 @@ def get_or_create_client_jwk():
     doc_ref = db.collection("config").document("oauth")
     doc = doc_ref.get()
     if doc.exists and "client_secret_jwk" in doc.to_dict():
-        return JsonWebKey.import_key(doc.to_dict()["client_secret_jwk"])
+        return JsonWebKey.import_key(json.loads(doc.to_dict()["client_secret_jwk"]))
     else:
         jwk = JsonWebKey.generate_key("EC", "P-256", is_private=True)
         doc_ref.set({"client_secret_jwk": jwk.as_json(is_private=True)}, merge=True)
@@ -133,14 +133,15 @@ def send_dm(to_did: str, text: str):
         return False
     client = Client()
     client.login(bluesky_api_username, bluesky_api_password)
+    chat_client = client.with_bsky_chat_proxy()
     try:
-        convo = client.chat.bsky.convo.get_convo_for_members({'members': [to_did]})
+        convo = chat_client.chat.bsky.convo.get_convo_for_members({'members': [to_did]})
         convo_id = convo.convo.id
     except Exception as e:
         print(f"Could not get convo: {e}")
         return False
     try:
-        client.chat.bsky.convo.send_message({'convo_id': convo_id, 'message': {'text': text}})
+        chat_client.chat.bsky.convo.send_message({'convo_id': convo_id, 'message': {'text': text}})
         return True
     except Exception as e:
         print(f"Could not send message: {e}")
