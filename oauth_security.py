@@ -32,7 +32,7 @@ def is_safe_url(url):
 # configures a "hardened" requests wrapper
 hardened_http = requests_hardened.Manager(
     requests_hardened.Config(
-        default_timeout=(2, 10),
+        default_timeout=(5, 30),
         never_redirect=True,
         ip_filter_enable=True,
         ip_filter_allow_loopback_ips=False,
