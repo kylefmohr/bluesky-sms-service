@@ -1,3 +1,4 @@
 .env
 scratch2.py
 .DS_Store
+*.pyc

@@ -2,8 +2,11 @@ atproto
 requests
 flask
 google-cloud-firestore
-google-cloud-secret-manager
 chump
 pytest
 pytest-mock
 python-dotenv
+authlib>=1.3
+dnspython>=2.6
+requests-hardened>=1.0.0b3
+regex>=2024.11.6

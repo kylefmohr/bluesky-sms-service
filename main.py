@@ -1,617 +1,441 @@
 import flask
-from atproto import Client, models, client_utils, IdResolver
-import requests, os, ast, re, time, sys
-from flask import Flask, request
-from google.cloud import secretmanager
+import os
+import re
+import json
+import time
+import requests
+from flask import Flask, request, jsonify, redirect, render_template_string
 from google.cloud import firestore
 from chump import Application
 from typing import List, Dict
+from datetime import datetime, timezone
+from urllib.parse import urlencode, urlparse
+
+from authlib.jose import JsonWebKey
+from atproto import Client, IdResolver, client_utils
+
+from oauth_identity import (
+    is_valid_did,
+    is_valid_handle,
+    resolve_identity,
+    pds_endpoint,
+)
+from oauth_client import (
+    refresh_token_request,
+    revoke_token_request,
+    pds_authed_req,
+    resolve_pds_authserver,
+    initial_token_request,
+    send_par_auth_request,
+    fetch_authserver_meta,
+    pds_dpop_jwt,
+    is_use_dpop_nonce_error_response
+)
+from oauth_security import is_safe_url, hardened_http
+from bsky_util import extract_facets
 
 app = Flask(__name__)
 
 registrations_open = True
-bluesky_api_username = 'assf.art'
-global approved_senders  # cloud run's docs says it's chill: https://cloud.google.com/run/docs/tips/general#use_global_variables
+bluesky_api_username = os.environ.get("BLUESKY_USERNAME", "assf.art")
+bluesky_api_password = os.environ.get("BLUESKY_APP_PASSWORD", "")
+global approved_senders
 
+OAUTH_SCOPE = "atproto repo:app.bsky.feed.post?action=create"
+
+def get_db():
+    return firestore.Client(project=os.environ.get("PROJECT_ID"), database="bluesky-registrations")
+
+def get_or_create_client_jwk():
+    db = get_db()
+    doc_ref = db.collection("config").document("oauth")
+    doc = doc_ref.get()
+    if doc.exists and "client_secret_jwk" in doc.to_dict():
+        return JsonWebKey.import_key(doc.to_dict()["client_secret_jwk"])
+    else:
+        jwk = JsonWebKey.generate_key("EC", "P-256", is_private=True)
+        doc_ref.set({"client_secret_jwk": jwk.as_json(is_private=True)}, merge=True)
+        return jwk
+
+try:
+    CLIENT_SECRET_JWK = get_or_create_client_jwk()
+    CLIENT_PUB_JWK = json.loads(CLIENT_SECRET_JWK.as_json(is_private=False))
+except Exception as e:
+    print(f"Failed to load/create client JWK: {e}")
+    CLIENT_SECRET_JWK = JsonWebKey.generate_key("EC", "P-256", is_private=True)
+    CLIENT_PUB_JWK = json.loads(CLIENT_SECRET_JWK.as_json(is_private=False))
+
+def compute_client_id(url_root):
+    parsed_url = urlparse(url_root)
+    if parsed_url.hostname in ["localhost", "127.0.0.1"]:
+        redirect_uri = f"http://127.0.0.1:{parsed_url.port}/oauth/callback"
+        client_id = "http://localhost?" + urlencode({
+            "redirect_uri": redirect_uri,
+            "scope": OAUTH_SCOPE,
+        })
+    else:
+        app_url = url_root.replace("http://", "https://")
+        redirect_uri = f"{app_url}oauth/callback"
+        client_id = f"{app_url}oauth-client-metadata.json"
+    return client_id, redirect_uri
 
 def send_pushover_message(message: str) -> None:
-    """
-    Send a message to Pushover.
-
-    Args:
-        message (str): The message to send.
-    """
-    print(f"Sending the following message to Pushover: {message}")
-    app = Application(os.environ.get("PUSHOVER_API_TOKEN"))
-    user = app.get_user(os.environ.get("PUSHOVER_USER_KEY"))
-    message = user.create_message(message, title="Bluesky SMS Service", html=False)
-    message.send()
-    return
-
-def get_handle_from_did(did: str) -> str:
-    """
-    Resolves a DID to the current handle using a public unauthenticated request.
-    """
-    public_client = Client() # This request can be unauthenticated
-    try:
-        response = public_client.com.atproto.repo.describe_repo({'repo': did})
-        return response.handle
-    except Exception as e:
-        print(f"Could not resolve DID {did}: {e}")
-        return None
-
+    print(f"Sending Pushover: {message}")
+    token = os.environ.get("PUSHOVER_API_TOKEN")
+    user_key = os.environ.get("PUSHOVER_USER_KEY")
+    if token and user_key:
+        app_pushover = Application(token)
+        user = app_pushover.get_user(user_key)
+        msg = user.create_message(message, title="Bluesky SMS Service", html=False)
+        msg.send()
 
 def load_approved_senders() -> list[str]:
-    """
-    Load the list of approved senders (phone numbers) from the Firestore database.
-
-    Returns:
-        list[str]: A list of approved sender phone numbers.
-    """
     global approved_senders
-    db = firestore.Client(project=os.environ.get("PROJECT_ID"), database="bluesky-registrations")
-    # Get all documents from the bluesky-registrations collection
+    db = get_db()
     docs = db.collection("bluesky-registrations").stream()
-    # Extract the document IDs (phone numbers)
-    approved_senders = [doc.id for doc in docs]
+    approved_senders = [doc.id for doc in docs if doc.to_dict().get("access_token")]
     print("Approved senders loaded: " + str(approved_senders))
     return approved_senders
 
-def add_sender(sender, username, did=None) -> bool:
-    """
-    Add a new sender to the Firestore database.
-
-    Args:
-        sender (str): The phone number of the sender.
-        username (str): The Bluesky username of the sender.
-        did (str, optional): The DID of the user.
-
-    Returns:
-        bool: True if the sender was successfully added, False otherwise.
-    """
-    global approved_senders
-    db = firestore.Client(project=os.environ.get("PROJECT_ID"), database="bluesky-registrations")
-    # Create a new document with sender (phone) as the document ID
-    doc_ref = db.collection("bluesky-registrations").document(sender)
-    data = {
-        "username": username,
-        "timestamp": firestore.SERVER_TIMESTAMP  # Use server timestamp for consistency
-    }
-    if did:
-        data["did"] = did
-        
-    doc_ref.set(data)
-    if sender not in approved_senders:
-        approved_senders.append(sender)
-    print(f"Added sender {sender} with username {username} and did {did}")
-    return True
-
-def delete_sender(sender, username=None) -> bool:
-    """
-    Delete a sender from the Firestore database.
-
-    Args:
-        sender (str): The phone number of the sender.
-        username (str): The Bluesky username of the sender. If it is not specified, uses the first username associated with the sender's phone
-
-    Returns:
-        bool: True if the sender was successfully deleted, False otherwise.
-    """
-    global approved_senders
-    db = firestore.Client(project=os.environ.get("PROJECT_ID"), database="bluesky-registrations")
-    # Delete the document with sender (phone) as the document ID
-    db.collection("bluesky-registrations").document(sender).delete()
-    if sender in approved_senders:
-        approved_senders.remove(sender)
-    return True
-
-def add_secret(username, app_password) -> bool:
-    """
-    Add a new secret (app password) to the Google Cloud Secret Manager.
-    The secret is titled as the user's Bluesky handle (with '.' replaced with '_')
-
-    Args:
-        username (str): The Bluesky username.
-        app_password (str): The app password for the Bluesky account.
-
-    Returns:
-        bool: True if the secret was successfully added, False otherwise.
-    """
-    secret_manager = secretmanager.SecretManagerServiceClient()
-    secret_id = username.lower().replace(".","_")
-    secret_settings = {'replication': {'automatic': {}}}
-    parent = "projects/" + os.environ.get("PROJECT_ID")
-    payload = app_password.encode("UTF-8")
-    try:
-        response = secret_manager.create_secret(secret_id=secret_id, parent=parent, secret=secret_settings)
-    except:
-        print("Failed to create secret for user: " + username)
-        send_pushover_message("Failed to create secret for user: " + username)
-        return False
-    parent = parent + "/secrets/" + secret_id
-    try:
-        response = secret_manager.add_secret_version(parent=parent, payload={"data": payload})
-    except:
-        print("Failed to add secret version for user: " + username)
-        send_pushover_message("Failed to add secret version for user: " + username)
-        return False
-    return True
-
-def delete_secret(username) -> bool:
-    """
-    Delete a secret (app password) from the Google Cloud Secret Manager.
-
-    Args:
-        username (str): The Bluesky username.
-
-    Returns:
-        bool: True if the secret was successfully deleted, False otherwise.
-    """
-    secret_manager = secretmanager.SecretManagerServiceClient
-    secret_id = "projects/" + os.environ.get("PROJECT_ID") + "/secrets/" + username
-    try:
-        response = secret_manager.delete_secret(name=secret_id)
-    except:
-        print("Failed to delete secret for user: " + username)
-        send_pushover_message("Failed to delete secret for user: " + username)
-        return False
-    return True
-
-
-
-def retrieve_secret(username) -> dict:
-    """
-    Retrieve the secret (app password) for a given username from the Google Cloud Secret Manager.
-
-    Args:
-        username (str): The Bluesky username.
-
-    Returns:
-        dict: The app password for the given username.
-    """
-    username = username.lower().replace(".","_") # Secret names don't allow periods, bsky usernames don't allow underscores
-    secret_manager = secretmanager.SecretManagerServiceClient()
-    secret_id = "projects/" + os.environ.get("PROJECT_ID") + "/secrets/" + username + "/versions/latest"
-    try:
-        response = secret_manager.access_secret_version(name=secret_id)
-    except Exception as e:
-        print(e)
-        print("Failed to retrieve secret for user: " + username)
-        send_pushover_message("Failed to retrieve secret for user: " + username)
-        exit(1)
-    secret_value = response.payload.data.decode("UTF-8")
-    return secret_value
-
-
 def retrieve_user_info(sender) -> dict:
-    """
-    Retrieve the Bluesky user info for a given sender from the Firestore database.
-
-    Args:
-        sender (str): The phone number of the sender.
-
-    Returns:
-        dict: A dictionary containing 'username' and 'did' (if available), or None if not found.
-    """
-    db = firestore.Client(project=os.environ.get("PROJECT_ID"), database="bluesky-registrations")
-    # Get the document with sender (phone) as the document ID
+    db = get_db()
     doc = db.collection("bluesky-registrations").document(sender).get()
     if doc.exists:
-        return doc.to_dict()
+        data = doc.to_dict()
+        data["sender"] = sender
+        return data
     return None
 
+def save_oauth_auth_request(state, data):
+    db = get_db()
+    db.collection("oauth-requests").document(state).set(data)
 
-def matches_app_password_format(app_password) -> bool:
-    """
-    Check if the given app password matches the required format.
+def get_and_delete_oauth_auth_request(state):
+    db = get_db()
+    doc_ref = db.collection("oauth-requests").document(state)
+    doc = doc_ref.get()
+    if doc.exists:
+        data = doc.to_dict()
+        doc_ref.delete()
+        return data
+    return None
 
-    Args:
-        app_password (str): The app password to check.
+def save_oauth_session(sender, data):
+    db = get_db()
+    db.collection("bluesky-registrations").document(sender).set(data, merge=True)
 
-    Returns:
-        bool: True if the app password matches the required format, False otherwise.
-    """
-    # app_password_format = re.compile(r'[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}')
-    # if app_password_format.match(app_password) is None:
-    #     print("App password is not in the correct format")
-    #     print("Login passwords are NOT supported")
-    #     return False
-    
-    # app passwords can be customized now! Just allow whatever
-    return True
+def delete_oauth_session(sender):
+    db = get_db()
+    db.collection("bluesky-registrations").document(sender).delete()
 
-
-def username_exists(username: str) -> str:
-    """
-    Check if a username exists on Bluesky.
-
-    Args:
-        username (str): The username to check.
-
-    Returns:
-        str: The DID if the username exists, None otherwise.
-    """
+def send_dm(to_did: str, text: str):
+    if not bluesky_api_password:
+        print("No BLUESKY_APP_PASSWORD set, cannot send DM.")
+        return False
+    client = Client()
+    client.login(bluesky_api_username, bluesky_api_password)
     try:
-        client = Client()
-        response = client.com.atproto.identity.resolve_handle({'handle': username})
-        return response.did
+        convo = client.chat.bsky.convo.get_convo_for_members({'members': [to_did]})
+        convo_id = convo.convo.id
     except Exception as e:
-        print(f"Error checking username existence: {e}")
-        return None
-
-
-def valid_app_password(username: str, app_password: str) -> bool:
-    """
-    Validate an app password for a given username.
-
-    Args:
-        username (str): The username to validate.
-        app_password (str): The app password to validate.
-
-    Returns:
-        bool: True if the app password is valid, False otherwise.
-    """
+        print(f"Could not get convo: {e}")
+        return False
     try:
-        client = Client()
-        client.login(username, app_password)
+        client.chat.bsky.convo.send_message({'convo_id': convo_id, 'message': {'text': text}})
         return True
     except Exception as e:
-        print(f"Error validating app password: {e}")
+        print(f"Could not send message: {e}")
         return False
 
+def pds_upload_blob(url: str, user: dict, file_bytes: bytes, content_type: str) -> Any:
+    db = get_db()
+    dpop_private_jwk = JsonWebKey.import_key(json.loads(user["dpop_private_jwk"]))
+    dpop_pds_nonce = user.get("dpop_pds_nonce", "")
+    access_token = user["access_token"]
+    for i in range(2):
+        dpop_jwt = pds_dpop_jwt("POST", url, access_token, dpop_pds_nonce, dpop_private_jwk)
+        with hardened_http.get_session() as sess:
+            resp = sess.post(
+                url,
+                headers={
+                    "Authorization": f"DPoP {access_token}",
+                    "DPoP": dpop_jwt,
+                    "Content-Type": content_type
+                },
+                data=file_bytes,
+            )
+        if is_use_dpop_nonce_error_response(resp):
+            dpop_pds_nonce = resp.headers.get("DPoP-Nonce")
+            user["dpop_pds_nonce"] = dpop_pds_nonce
+            save_oauth_session(user["sender"], {"dpop_pds_nonce": dpop_pds_nonce})
+            continue
+        break
+    return resp
 
-def register_sender(sender, username, app_password) -> bool:
-    """
-    Register a new sender with their Bluesky username and app password.
+def pds_authed_req_with_db(method: str, url: str, user: dict, body=None) -> Any:
+    db = get_db()
+    dpop_private_jwk = JsonWebKey.import_key(json.loads(user["dpop_private_jwk"]))
+    dpop_pds_nonce = user.get("dpop_pds_nonce", "")
+    access_token = user["access_token"]
+    for i in range(2):
+        dpop_jwt = pds_dpop_jwt(method, url, access_token, dpop_pds_nonce, dpop_private_jwk)
+        with hardened_http.get_session() as sess:
+            resp = sess.request(
+                method,
+                url,
+                headers={
+                    "Authorization": f"DPoP {access_token}",
+                    "DPoP": dpop_jwt,
+                },
+                json=body,
+            )
+        if is_use_dpop_nonce_error_response(resp):
+            dpop_pds_nonce = resp.headers.get("DPoP-Nonce")
+            user["dpop_pds_nonce"] = dpop_pds_nonce
+            save_oauth_session(user["sender"], {"dpop_pds_nonce": dpop_pds_nonce})
+            continue
+        break
+    return resp
 
-    Args:
-        sender (str): The phone number of the sender.
-        username (str): The Bluesky username of the sender.
-        app_password (str): The app password for the Bluesky account.
-    Returns:
-        bool: True if the sender was successfully registered, False otherwise.
-    """
-    global approved_senders
-
-    if not matches_app_password_format(app_password):
-        if app_password.startswith("<"):
-            app_password = app_password.replace("<","").replace(">","")
-        else:
-            print("App password is not in the correct regex format")
-            return False
-
-    #https://atproto.com/specs/handle#:~:text=Handles%20are%20not%20case%2Dsensitive%2C%20and%20should%20be%20normalized%20to%20lowercase%20(that%20is%2C%20normalize%20ASCII%20A%2DZ%20to%20a%2Dz)
-    username = username.lower()
-    
-    did = username_exists(username)
-    if not did:
-        if username.startswith("<"):
-            username = username.replace("<","").replace(">","")
-            did = username_exists(username)
-        
-        if not did:
-            print("Username does not exist")
-            return False
-
-    print("Username validated")
-
-    if not valid_app_password(username, app_password):
-        print("App password is not valid, could not log in as " + username)
-        return False
-
-    if add_sender(sender, username, did):
-        print("Successfully added sender to database")
-    else:
-        print("Failed to add sender to database")
-        approved_senders = load_approved_senders()
-        if sender not in approved_senders:
-            return False
-        else:
-            print("Sender got added even though add_sender returned false")
-            send_pushover_message("Sender " + sender + " got added even though add_sender returned false")
-            pass
-
-    if add_secret(username, app_password):
-        print("Successfully added secret")
-    else:
-        print("Failed to add secret")
-        approved_senders = load_approved_senders()
-        if sender not in approved_senders:
-            return False
-        else:
-            print("Sender got added even though add_secret returned false. Attempting to delete sender")
-            send_pushover_message("Sender " + sender + " got added even though add_secret returned false. Attempting to delete sender")
-            if delete_sender(sender, username):
-                print("Successfully deleted sender")
-            else:
-                print("Failed to delete sender")
-                return False
-    return True
-
-
-def cleanup_jpgs() -> None:
-    """
-    Remove all .jpg files from the current directory.
-    """
-    for filename in os.listdir():
-        if filename.endswith(".jpg"):
-            os.remove(filename)
-
-
-
-
-def parse_facets(text: str) -> client_utils.TextBuilder:
-    """
-    Create a TextBuilder with proper facets for mentions and URLs
-    
-    Args:
-        text (str): The original text to parse
-        
-    Returns:
-        TextBuilder: A TextBuilder with facets for mentions and URLs
-    """
-    # For proper handling, we need to analyze the text and mark positions for 
-    # both mentions and URLs, then insert them in order
-    
-    # Find all mentions
-    mention_regex = r'@([a-zA-Z0-9]+\.[a-zA-Z0-9]{2,})'
-    mentions = list(re.finditer(mention_regex, text))
-    
-    # Enhanced URL regex to catch domains with and without protocols
-    url_regex = r"(https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*[-a-zA-Z0-9@%_\+~#//=])?|(?<!\S|@)[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*[-a-zA-Z0-9@%_\+~#//=])?)"
-    urls = list(re.finditer(url_regex, text))
-    
-    # If no facets found, just return a TextBuilder with the original text
-    if not mentions and not urls:
-        text_builder = client_utils.TextBuilder()
-        text_builder.text(text)
-        return text_builder
-    
-    # Create a list of all facets with their positions
+def parse_facets_to_dict(text: str) -> list:
     resolver = IdResolver()
     facets = []
-    
-    # Process mentions first
-    mention_ranges = []
-    for mention in mentions:
-        username = mention.group(1)
-        start = mention.start()
-        end = mention.end()
-        mention_ranges.append((start, end))
-        facets.append({
-            'type': 'mention',
-            'start': start,
-            'end': end,
-            'username': username,
-            'did': resolver.handle.resolve(username)
-        })
-    
-    # Now process URLs, but skip any that overlap with mention ranges
-    for url_match in urls:
-        url = url_match.group(0)
-        start = url_match.start()
-        end = url_match.end()
-        
-        # Check if this URL overlaps with any mention
-        overlaps = False
-        for m_start, m_end in mention_ranges:
-            # Check for any kind of overlap
-            if (start >= m_start and start < m_end) or (end > m_start and end <= m_end) or (start <= m_start and end >= m_end):
-                overlaps = True
-                break
-        
-        if not overlaps:
-            link_url = url if url.startswith(('http://', 'https://')) else f'https://{url}'
+    mention_regex = r'@([a-zA-Z0-9]+\.[a-zA-Z0-9]{2,})'
+    for match in re.finditer(mention_regex, text):
+        username = match.group(1)
+        did = resolver.handle.resolve(username)
+        if did:
             facets.append({
-                'type': 'link',
-                'start': start,
-                'end': end,
-                'text': url,
-                'uri': link_url
+                "index": {"byteStart": len(text[:match.start()].encode('utf-8')), "byteEnd": len(text[:match.end()].encode('utf-8'))},
+                "features": [{"$type": "app.bsky.richtext.facet#mention", "did": did}]
             })
+    url_regex = r"(https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&//=]*[-a-zA-Z0-9@%_\+~#//=])?)"
+    for match in re.finditer(url_regex, text):
+        url = match.group(1)
+        facets.append({
+            "index": {"byteStart": len(text[:match.start()].encode('utf-8')), "byteEnd": len(text[:match.end()].encode('utf-8'))},
+            "features": [{"$type": "app.bsky.richtext.facet#link", "uri": url}]
+        })
+    facets.sort(key=lambda x: x["index"]["byteStart"])
+    return facets
+
+def send_post_oauth(user: dict, body: str, attachment_path=None):
+    pds_url = user["pds_url"]
     
-    # Sort facets by their start position
-    facets.sort(key=lambda x: x['start'])
+    blob_ref = None
+    if attachment_path:
+        upload_url = f"{pds_url}/xrpc/com.atproto.repo.uploadBlob"
+        content_type = "image/jpeg"
+        if attachment_path.lower().endswith(".png"): content_type = "image/png"
+        with open(attachment_path, "rb") as f:
+            img_bytes = f.read()
+        resp = pds_upload_blob(upload_url, user, img_bytes, content_type)
+        resp.raise_for_status()
+        blob_ref = resp.json()["blob"]
+
+    req_url = f"{pds_url}/xrpc/com.atproto.repo.createRecord"
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     
-    # Build the text with facets
-    text_builder = client_utils.TextBuilder()
-    last_end = 0
-    
-    for facet in facets:
-        # Add the text before this facet
-        if facet['start'] > last_end:
-            text_builder.text(text[last_end:facet['start']])
-        
-        # Add the facet
-        if facet['type'] == 'mention':
-            text_builder.mention('@' + facet['username'], facet['did']) # add @ symbol back
-        elif facet['type'] == 'link':
-            text_builder.link(facet['text'], facet['uri'])
-        
-        last_end = facet['end']
-    
-    # Add any remaining text after the last facet
-    if last_end < len(text):
-        text_builder.text(text[last_end:])
-    
-    return text_builder
+    record = {
+        "$type": "app.bsky.feed.post",
+        "text": body,
+        "facets": parse_facets_to_dict(body),
+        "createdAt": now,
+    }
+    if blob_ref:
+        record["embed"] = {
+            "$type": "app.bsky.embed.images",
+            "images": [{"alt": "Uploaded image", "image": blob_ref}]
+        }
+
+    post_body = {
+        "repo": user["did"],
+        "collection": "app.bsky.feed.post",
+        "record": record,
+    }
+    resp = pds_authed_req_with_db("POST", req_url, user, body=post_body)
+    resp.raise_for_status()
+    print("Post sent successfully!")
+    return resp.json()
 
 
-def send_post(username: str, app_password: str, body: str, reply_ref=None, attachment_path=None) -> dict:
-    """
-    Send a post to Bluesky.
+@app.route("/oauth-client-metadata.json")
+def oauth_client_metadata():
+    app_url = request.url_root.replace("http://", "https://")
+    client_id = f"{app_url}oauth-client-metadata.json"
+    return jsonify({
+        "client_id": client_id,
+        "dpop_bound_access_tokens": True,
+        "application_type": "web",
+        "redirect_uris": [f"{app_url}oauth/callback"],
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "scope": OAUTH_SCOPE,
+        "token_endpoint_auth_method": "private_key_jwt",
+        "token_endpoint_auth_signing_alg": "ES256",
+        "jwks_uri": f"{app_url}oauth/jwks.json",
+        "client_name": "Bluesky SMS Service",
+        "client_uri": app_url,
+    })
 
-    Args:
-        username (str): The Bluesky username.
-        app_password (str): The app password for the Bluesky account.
-        body (str): The content of the post.
-        reply_ref (dict, optional): The reference to the post being replied to. Defaults to None.
-        attachment_path (str, optional): The path to the attachment file. Defaults to None.
+@app.route("/oauth/jwks.json")
+def oauth_jwks():
+    return jsonify({"keys": [CLIENT_PUB_JWK]})
 
-    Returns:
-        dict: The response from the Bluesky API.
-    """
+@app.route("/oauth/login")
+def oauth_login():
+    sender = request.args.get("sender")
+    username = request.args.get("username")
+    if not sender or not username:
+        return "Missing sender or username", 400
+
     try:
-        client = Client()
-        client.login(username, app_password)
-
-        # Create TextBuilder with facets (URLs and mentions)
-        text_builder = parse_facets(body)
-
-        # If there's an attachment
-        if attachment_path:
-            with open(attachment_path, 'rb') as f:
-                # Pass the TextBuilder and attachment directly to the send_post method
-                response = client.send_post(
-                    text=text_builder,
-                    image=f,
-                    image_alt="Uploaded image"
-                )
-        else:
-            # Without attachment, just pass the TextBuilder
-            if reply_ref:
-                response = client.send_post(
-                    text=text_builder,
-                    reply_to=reply_ref
-                )
-            else:
-                response = client.send_post(text=text_builder)
-        print("Post from " + username + " sent successfully: " + str(body))
-        # Extract URI and CID from the response
-        return {'uri': response.uri, 'cid': response.cid}
-
+        did, handle, did_doc = resolve_identity(username)
     except Exception as e:
-        send_pushover_message(f"Error sending post: {e}")
-        raise
+        return f"Failed to resolve identity: {e}", 400
 
+    pds_url = pds_endpoint(did_doc)
+    authserver_url = resolve_pds_authserver(pds_url)
+    authserver_meta = fetch_authserver_meta(authserver_url)
 
-def unregister_sender(sender: str, username: str = None) -> bool:
-    """
-    Unregister a sender from the Firestore database and delete their secret from the Google Cloud Secret Manager.
+    dpop_private_jwk = JsonWebKey.generate_key("EC", "P-256", is_private=True)
+    client_id, redirect_uri = compute_client_id(request.url_root)
 
-    Args:
-        sender (str): The phone number of the sender.   
-        username (str): The Bluesky username of the sender. If it is not specified, uses the first username associated with the sender's phone
+    pkce_verifier, state, dpop_authserver_nonce, resp = send_par_auth_request(
+        authserver_url, authserver_meta, did, client_id, redirect_uri, OAUTH_SCOPE, CLIENT_SECRET_JWK, dpop_private_jwk
+    )
+    resp.raise_for_status()
+    par_request_uri = resp.json()["request_uri"]
 
-    Returns:
-        bool: True if the sender was successfully unregistered, False otherwise.
-    """
-    global approved_senders
-    if username is None:
-        user_info = retrieve_user_info(sender)
-        username = user_info.get("username") if user_info else None
-    if delete_sender(sender, username):
-        print("Successfully deleted sender from database")
-    else:
-        print("Failed to delete sender from database")
-        return False
-    if delete_secret(username):
-        print("Successfully deleted secret")
-    else:
-        print("Failed to delete secret")
-        return False
-    return True
+    save_oauth_auth_request(state, {
+        "state": state,
+        "authserver_iss": authserver_meta["issuer"],
+        "did": did,
+        "handle": handle,
+        "pds_url": pds_url,
+        "pkce_verifier": pkce_verifier,
+        "scope": OAUTH_SCOPE,
+        "dpop_authserver_nonce": dpop_authserver_nonce,
+        "dpop_private_jwk": dpop_private_jwk.as_json(is_private=True),
+        "sender": sender
+    })
 
+    auth_url = authserver_meta["authorization_endpoint"]
+    qparam = urlencode({"client_id": client_id, "request_uri": par_request_uri})
+    return redirect(f"{auth_url}?{qparam}")
+
+@app.route("/oauth/callback")
+def oauth_callback():
+    error = request.args.get("error")
+    if error:
+        return f"Authorization failed: {error} - {request.args.get('error_description')}", 400
+
+    state = request.args.get("state")
+    authserver_iss = request.args.get("iss")
+    authorization_code = request.args.get("code")
+
+    row = get_and_delete_oauth_auth_request(state)
+    if not row:
+        return "OAuth request not found", 400
+    if row["authserver_iss"] != authserver_iss:
+        return "Issuer mismatch", 400
+
+    client_id, redirect_uri = compute_client_id(request.url_root)
+    tokens, dpop_authserver_nonce = initial_token_request(
+        row, authorization_code, client_id, redirect_uri, CLIENT_SECRET_JWK
+    )
+    
+    if row["did"] and tokens["sub"] != row["did"]:
+        return "DID mismatch", 400
+
+    save_oauth_session(row["sender"], {
+        "did": row["did"],
+        "username": row["handle"],
+        "pds_url": row["pds_url"],
+        "authserver_iss": authserver_iss,
+        "access_token": tokens["access_token"],
+        "refresh_token": tokens["refresh_token"],
+        "dpop_authserver_nonce": dpop_authserver_nonce,
+        "dpop_private_jwk": row["dpop_private_jwk"],
+        "dpop_pds_nonce": "",
+        "timestamp": firestore.SERVER_TIMESTAMP
+    })
+
+    return render_template_string("<h1>Success!</h1><p>You can now close this window and send SMS to post.</p>")
 
 @app.route("/sms", methods=["POST"])
 def webhook_handler() -> flask.Response:
-    """
-    Handle incoming SMS messages and process them accordingly.
-
-    Returns:
-        flask.Response: The response to be sent back to the sender.
-    """
     flask_response = flask.Response("OK")
-    global approved_senders
-    approved_senders = load_approved_senders()
-    sms_body = request.form["Body"]
+    sms_body = request.form["Body"].strip()
     sender = request.form["From"]
-    media_included = request.form.get("NumMedia", "0") != "0"  # True if media is included, else false
-    if sender not in approved_senders:  # Sender not in approved senders
-        if registrations_open:
-            if sms_body.lower().startswith("register") or sms_body.lower().startswith("!register"):
-                username = sms_body.split(" ")[1].strip()
-                app_password = sms_body.split(" ")[2].strip().lower()
-                resp = register_sender(sender, username, app_password)
-                print(sender + ": " + sms_body)
-                print(resp)
-                return flask_response
-            else:
-                print("Sender: " + sender + " not registered, and SMS did not start with the word 'register'")
-                print(sms_body)
-                sys.exit(1)
-        else:
-            print("A registration request was sent while registrations are closed. From: " + sender + ": " + sms_body)
-            sys.exit(1)
-    else:  # Sender is in approved senders
-        user_info = retrieve_user_info(sender)
-        username = user_info.get("username")
-        did = user_info.get("did")
-        app_password = retrieve_secret(username)
-        
-        current_handle = username
-        if did:
-            resolved_handle = get_handle_from_did(did)
-            if resolved_handle:
-                current_handle = resolved_handle
+    media_included = request.form.get("NumMedia", "0") != "0"
 
-        if sms_body.lower().startswith("!unregister"):
-            try:
-                unregister_username = sms_body.split(" ")[1]
-            except:
-                unregister_username = username
-            if unregister_username == username:
-                resp = unregister_sender(sender, unregister_username)
-                print(sender + ": " + sms_body)
-                print(resp)
-                return flask_response
-            else:
-                print("Unregister username does not match registered username")
-                sys.exit(1)
-        elif sms_body.startswith("!register") or sms_body.startswith("register"):
-            try:
-                potential_app_password = sms_body.split(" ")[2]
-            except:
-                potential_app_password = None
-            print("Exiting so we don't accidentially leak somebody's password! Multiple accounts not supported right now, but this is planned")
-            sys.exit(1)
-            # if matches_app_password_format(potential_app_password):
-            #     print("Registration request sent by registered sender")
-            #     if registrations_open:
-            #         print("Registering new account for known sender")
-            #         username = sms_body.split(" ")[1]
-            #         app_password = sms_body.split(" ")[2]
-            #         developer_app_password = retrieve_secret(bluesky_api_username)
-            #         developer_username = bluesky_api_username
-            #         resp = register_sender(sender, username, app_password, developer_username, developer_app_password)
-            #         return flask_response
-        if not media_included:
-            send_post(current_handle, app_password, sms_body)
+    user_info = retrieve_user_info(sender)
+    
+    if sms_body.lower().startswith("register") or sms_body.lower().startswith("!register"):
+        if not registrations_open: return flask_response
+        parts = sms_body.split(" ")
+        if len(parts) < 2: return flask_response
+        username = parts[1].strip().lower()
+        if username.startswith("<"): username = username.replace("<","").replace(">","")
+        try:
+            did, handle, _ = resolve_identity(username)
+        except Exception as e:
+            print(f"Failed to resolve identity: {e}")
             return flask_response
-        elif media_included:
-            jpg_included = False
+
+        # Generate login link
+        app_url = request.url_root.replace("http://", "https://")
+        login_link = f"{app_url}oauth/login?sender={urlencode({'s':sender})[2:]}&username={urlencode({'u':username})[2:]}"
+        
+        # DM user
+        send_dm(did, f"Click here to authorize your account for SMS posting: {login_link}")
+        return flask_response
+
+    if sms_body.lower().startswith("!unregister"):
+        delete_oauth_session(sender)
+        return flask_response
+
+    if not user_info or "access_token" not in user_info:
+        print(f"Sender {sender} not registered or not authorized.")
+        return flask_response
+
+    # Refresh token logic before posting
+    try:
+        client_id, _ = compute_client_id(request.url_root)
+        tokens, dpop_authserver_nonce = refresh_token_request(user_info, client_id, CLIENT_SECRET_JWK)
+        user_info["access_token"] = tokens["access_token"]
+        user_info["refresh_token"] = tokens["refresh_token"]
+        user_info["dpop_authserver_nonce"] = dpop_authserver_nonce
+        save_oauth_session(sender, {
+            "access_token": tokens["access_token"],
+            "refresh_token": tokens["refresh_token"],
+            "dpop_authserver_nonce": dpop_authserver_nonce
+        })
+    except Exception as e:
+        print(f"Failed to refresh token: {e}")
+        return flask_response
+
+    try:
+        if not media_included:
+            send_post_oauth(user_info, sms_body)
+        else:
             filename = ""
-            sms_body = request.form["Body"]
             for i in range(int(request.form.get("NumMedia", 0))):
-                if request.form.get(f"MediaContentType{i}", None) == "image/jpeg":
-                    jpg_included = True
+                if request.form.get(f"MediaContentType{i}", None) in ["image/jpeg", "image/png"]:
                     response = requests.get(request.form.get(f"MediaUrl{i}", None))
                     filename = request.form.get(f"MediaUrl{i}", None).split('/')[-1]
-                    open(filename, 'wb').write(response.content)
+                    with open(filename, 'wb') as f: f.write(response.content)
                 elif request.form.get(f"MediaContentType{i}", None) == "text/plain":
                     sms_body = str(sms_body) + requests.get(request.form.get(f"MediaUrl{i}", None)).text
-                else:
-                    print("Unsupported media type: " + request.form.get(f"MediaContentType{i}", None))
-            attachment_path = os.path.abspath(filename)
-            send_post(current_handle, app_password, sms_body, attachment_path=attachment_path)
-            if not jpg_included:  # TODO: add support for other image formats
-                print("Not a jpg")
-                return flask_response
-            return flask_response
+
+            attachment_path = os.path.abspath(filename) if filename else None
+            send_post_oauth(user_info, sms_body, attachment_path=attachment_path)
+    except Exception as e:
+        send_pushover_message(f"Error posting: {e}")
+        print(e)
 
     return flask_response
 
-
 if __name__ == "__main__":
-    # Google Cloud Run expects the app to listen on 8080
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))

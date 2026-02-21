@@ -2,180 +2,63 @@ import pytest
 from unittest.mock import MagicMock, patch
 import os
 import json
-from main import app, username_exists, valid_app_password, send_post, add_sender, retrieve_secret
-from atproto import client_utils
-from dotenv import load_dotenv
-from chump import Application
 
-# Initialize variables
-PROJECT_ID = None
-PUSHOVER_API_TOKEN = None
-PUSHOVER_USER_KEY = None
+# Set environment before importing main
+os.environ['PROJECT_ID'] = 'test-project'
+os.environ['PUSHOVER_API_TOKEN'] = 'test'
+os.environ['PUSHOVER_USER_KEY'] = 'test'
+os.environ['BLUESKY_USERNAME'] = 'bot.bsky.social'
+os.environ['BLUESKY_APP_PASSWORD'] = 'bot-password'
 
-# Load environment variables from .env file
-load_dotenv()
-
-# Get environment variables
-PROJECT_ID = os.environ.get('PROJECT_ID')
-PUSHOVER_API_TOKEN = os.environ.get('PUSHOVER_API_TOKEN')
-PUSHOVER_USER_KEY = os.environ.get('PUSHOVER_USER_KEY')
-
-# Print which variables are missing (for debugging)
-if not PROJECT_ID:
-    print("PROJECT_ID is missing")
-if not PUSHOVER_API_TOKEN:
-    print("PUSHOVER_API_TOKEN is missing")
-if not PUSHOVER_USER_KEY:
-    print("PUSHOVER_USER_KEY is missing")
-
-# Initialize global variables
-import main
-main.approved_senders = []
+from main import app, retrieve_user_info, save_oauth_session, send_post_oauth
 
 @pytest.fixture
 def client():
-    """Create a test client for our Flask app"""
     app.config['TESTING'] = True
     with app.test_client() as client:
         yield client
 
 @pytest.fixture
 def mock_firestore():
-    """Mock Firestore client"""
-    with patch('google.cloud.firestore.Client') as mock:
+    with patch('main.firestore.Client') as mock:
         mock_collection = MagicMock()
         mock_doc = MagicMock()
         mock_collection.document.return_value = mock_doc
         mock.return_value.collection.return_value = mock_collection
         yield mock
 
-@pytest.fixture
-def mock_secret_manager():
-    """Mock Secret Manager client"""
-    with patch('google.cloud.secretmanager.SecretManagerServiceClient') as mock:
-        mock_response = MagicMock()
-        mock_response.payload.data.decode.return_value = "test-secret"
-        mock.return_value.access_secret_version.return_value = mock_response
-        yield mock
-
-@pytest.fixture
-def mock_atproto_client():
-    """Mock atproto Client"""
-    with patch('main.Client') as mock:
-        # Create a mock client instance with all required attributes
-        mock_client = MagicMock()
-        
-        # Set up mock structure
-        mock_client.com = MagicMock()
-        mock_client.com.atproto = MagicMock()
-        mock_client.com.atproto.identity = MagicMock()
-        mock_client.com.atproto.repo = MagicMock()
-        
-        # Set up successful response for resolve_handle
-        mock_resolve_response = MagicMock()
-        mock_resolve_response.did = "test_did"
-        mock_client.com.atproto.identity.resolve_handle.return_value = mock_resolve_response
-        
-        # Set up successful response for login
-        mock_client.login = MagicMock(return_value=mock_client)
-        
-        # Set up successful response for create_record
-        mock_record_response = MagicMock()
-        mock_record_response.uri = "test_uri"
-        mock_record_response.cid = "test_cid"
-        mock_client.com.atproto.repo.create_record = MagicMock(return_value=mock_record_response)
-        mock_client.me = MagicMock(did="test_did")
-        
-        # Make the mock return our configured client
-        mock.return_value = mock_client
-        
-        yield mock
-
-def test_username_exists_valid(mock_atproto_client):
-    """Test username_exists with a valid username"""
-    result = username_exists("valid.user")
-    assert result == "test_did"
-    mock_atproto_client.return_value.com.atproto.identity.resolve_handle.assert_called_once_with(
-        {'handle': 'valid.user'}
-    )
-
-def test_username_exists_invalid(mock_atproto_client):
-    """Test username_exists with an invalid username"""
-    mock_atproto_client.return_value.com.atproto.identity.resolve_handle.side_effect = Exception("User not found")
-    result = username_exists("invalid.user")
-    assert result is None
-
-def test_valid_app_password_success(mock_atproto_client):
-    """Test valid_app_password with valid credentials"""
-    result = valid_app_password("valid.user", "valid-password")
-    assert result is True
-    mock_atproto_client.return_value.login.assert_called_once_with("valid.user", "valid-password")
-
-def test_valid_app_password_failure(mock_atproto_client):
-    """Test valid_app_password with invalid credentials"""
-    mock_atproto_client.return_value.login.side_effect = Exception("Invalid credentials")
-    result = valid_app_password("invalid.user", "invalid-password")
-    assert result is False
-
-@patch('main.time')
-def test_send_post_success(mock_time, mock_atproto_client):
-    """Test send_post with successful post"""
-    # Set up the mock return values for the client.send_post response
-    mock_response = MagicMock()
-    mock_response.uri = "test_uri"
-    mock_response.cid = "test_cid"
-    mock_atproto_client.return_value.send_post.return_value = mock_response
+def test_retrieve_user_info(mock_firestore):
+    mock_doc = mock_firestore.return_value.collection.return_value.document.return_value.get.return_value
+    mock_doc.exists = True
+    mock_doc.to_dict.return_value = {"username": "test.bsky.social"}
     
-    result = send_post("test.user", "test-password", "Hello, world!")
-    
-    assert result == {"uri": "test_uri", "cid": "test_cid"}
-    
-    # Verify login was called
-    mock_atproto_client.return_value.login.assert_called_once_with("test.user", "test-password")
-    
-    # Verify send_post was called with a TextBuilder instance
-    # Get the args from the call
-    args, kwargs = mock_atproto_client.return_value.send_post.call_args
-    
-    # Check that the text argument is a TextBuilder
-    assert 'text' in kwargs
-    assert isinstance(kwargs['text'], client_utils.TextBuilder)
+    result = retrieve_user_info("+1234567890")
+    assert result["username"] == "test.bsky.social"
+    assert result["sender"] == "+1234567890"
 
-@patch('main.load_approved_senders')
-@patch('main.sys.exit')
-def test_webhook_handler_unauthorized(mock_exit, mock_load_approved_senders, client):
-    """Test webhook handler with unauthorized sender"""
-    mock_load_approved_senders.return_value = []
-    response = client.post('/sms', data={
-        'From': '+1234567890',
-        'Body': 'Test message'
-    })
-    assert response.status_code == 200
-    mock_exit.assert_called_once_with(1)
+def test_save_oauth_session(mock_firestore):
+    save_oauth_session("+1234567890", {"access_token": "token"})
+    mock_firestore.return_value.collection.return_value.document.assert_called_with("+1234567890")
+    mock_firestore.return_value.collection.return_value.document.return_value.set.assert_called_with({"access_token": "token"}, merge=True)
 
-def test_add_sender_success(mock_firestore):
-    """Test adding a new sender successfully"""
-    result = add_sender("+1234567890", "test.user")
+@patch('main.pds_authed_req_with_db')
+def test_send_post_oauth(mock_pds_authed_req_with_db):
+    user = {
+        "did": "did:plc:123", 
+        "pds_url": "https://pds.example.com", 
+        "dpop_private_jwk": '{"kty":"EC"}', 
+        "access_token": "token", 
+        "sender": "+1"
+    }
     
-    assert result is True
-    mock_firestore.return_value.collection.assert_called_once_with("bluesky-registrations")
-    mock_firestore.return_value.collection.return_value.document.assert_called_once_with("+1234567890")
-    mock_firestore.return_value.collection.return_value.document.return_value.set.assert_called_once()
-
-def test_retrieve_secret_success(mock_secret_manager):
-    """Test retrieving a secret successfully"""
-    result = retrieve_secret("test.user")
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"uri": "test_uri", "cid": "test_cid"}
+    mock_pds_authed_req_with_db.return_value = mock_resp
     
-    assert result == "test-secret"
-    expected_secret_path = f"projects/{PROJECT_ID}/secrets/test_user/versions/latest"
-    mock_secret_manager.return_value.access_secret_version.assert_called_once_with(
-        name=expected_secret_path
-    )
-
-def test_pushover_notification_success():
-    """Test sending a notification to Pushover"""
-    app = Application(PUSHOVER_API_TOKEN)
-    user = app.get_user(PUSHOVER_USER_KEY)
-    message = user.create_message("Test message", title="Test title")
-    result = message.send()
-    assert result is True
+    with patch('main.JsonWebKey.import_key'):
+        with patch('main.datetime') as mock_datetime:
+            mock_datetime.now.return_value.isoformat.return_value = "2023-01-01T00:00:00Z"
+            # mock parse_facets_to_dict as well to avoid complicated matching
+            with patch('main.parse_facets_to_dict', return_value=[]):
+                result = send_post_oauth(user, "Hello!")
+                assert result == {"uri": "test_uri", "cid": "test_cid"}
