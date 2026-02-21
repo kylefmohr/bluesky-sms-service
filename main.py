@@ -6,7 +6,7 @@ import requests
 from flask import Flask, request, jsonify, redirect, render_template_string
 from google.cloud import firestore
 from chump import Application
-from typing import List, Dict
+from typing import List, Dict, Any
 from datetime import datetime, timezone
 from urllib.parse import urlencode, urlparse
 
