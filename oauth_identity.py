@@ -83,6 +83,7 @@ def resolve_handle(handle: str) -> Optional[str]:
         return None
     did = resp.text.split()[0]
     if is_valid_did(did):
+        print("HTTP handle resolution success:", handle, "->", did)
         return did
     return None
 
