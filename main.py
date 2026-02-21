@@ -2,7 +2,6 @@ import flask
 import os
 import re
 import json
-import time
 import requests
 from flask import Flask, request, jsonify, redirect, render_template_string
 from google.cloud import firestore
