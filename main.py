@@ -304,6 +304,8 @@ def oauth_login():
     pkce_verifier, state, dpop_authserver_nonce, resp = send_par_auth_request(
         authserver_url, authserver_meta, did, client_id, redirect_uri, OAUTH_SCOPE, CLIENT_SECRET_JWK, dpop_private_jwk
     )
+    if resp.status_code >= 400:
+        print(f"PAR HTTP {resp.status_code}: {resp.text}")
     resp.raise_for_status()
     par_request_uri = resp.json()["request_uri"]
 
