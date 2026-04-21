@@ -29,5 +29,6 @@ Simply text `!unregister <your bsky.social handle>` to `+1-414-432-4321`, and yo
  - ~Fix handles not linking properly when you post via this platform ([see this example](https://bsky.app/profile/assf.art/post/3lc4v7dajqs2k))~
    - ~Also, does this apply to normal URLs? If so, fix that too~
  - Support for video attachments
-   - Maybe. This is a very low priority: videos sent using MMS are extremely compressed, take a long time to send, and are more pricey to receive. 
+   - Maybe. This is a very low priority: videos sent using MMS are extremely compressed, take a long time to send, and are more pricey to receive.
+ - Support for people on other PDS's! This is a big one 
  
