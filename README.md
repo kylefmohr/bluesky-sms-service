@@ -18,6 +18,11 @@ Simply text `!unregister <your bsky.social handle>` to `+1-414-432-4321`, and yo
 
 ### TODO:
 
+ - Support for people on other PDS's! This is a big one
+ - Add alternative entry points for messages
+   - WhatsApp
+   - Telegram
+   - Signal?
  - ~Move off of BigQuery, as it wasn't the right choice, especially due to the inability to delete entries for the first 90 minutes after they were created.~
    - ~Possibly Cloud Firestore~ Done
  - Use something better than Secret Manager as I don't think this is the right use-case for that service. Maybe OAuth?
@@ -30,5 +35,5 @@ Simply text `!unregister <your bsky.social handle>` to `+1-414-432-4321`, and yo
    - ~Also, does this apply to normal URLs? If so, fix that too~
  - Support for video attachments
    - Maybe. This is a very low priority: videos sent using MMS are extremely compressed, take a long time to send, and are more pricey to receive.
- - Support for people on other PDS's! This is a big one 
+
  
